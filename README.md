@@ -9,28 +9,28 @@ Keet provides an end-to-end web framework entirely written in modern C++ (C++20)
 ## Features
 
 - **Component-Driven C++ UI Engine (`UIEngine`):**
-    - Declarative Virtual DOM nodes (`VNode`) and tag helpers (`div`, `button`, `form`, `input`, `dialog`, etc.) [cite: 7, 11].
-    - Scoped persistent state via React-style `useState<T>` hooks [cite: 11].
-    - Component lifecycle hooks (`onMount`, `onUnmount`) with automatic scope tracking and cleanup [cite: 7, 11].
-    - Scoped CSS-in-C++ stylesheet aggregation (`StyleSheet`) served automatically at `/styles.css` [cite: 7, 11].
-    - Client-side routing (`Router`, `Link`) with pushState browser history [cite: 7, 11].
-    - Isolated multi-session state management (`SessionManager`) with configurable idle TTL pruning [cite: 7, 11].
+    - Declarative Virtual DOM nodes (`VNode`) and tag helpers (`div`, `button`, `form`, `input`, `dialog`, etc.).
+    - Scoped persistent state via React-style `useState<T>` hooks.
+    - Component lifecycle hooks (`onMount`, `onUnmount`) with automatic scope tracking and cleanup.
+    - Scoped CSS-in-C++ stylesheet aggregation (`StyleSheet`) served automatically at `/styles.css`.
+    - Client-side routing (`Router`, `Link`) with pushState browser history.
+    - Isolated multi-session state management (`SessionManager`) with configurable idle TTL pruning.
 
 - **Concurrent Multi-Threaded HTTP Server (`HTTPServer`):**
-    - Worker thread pool architecture with a synchronized task queue and condition variable signaling [cite: 8, 9].
-    - Zero external dependencies; built using standard POSIX sockets and native C++ threads [cite: 8, 9].
-    - Built-in CORS preflight handling (`OPTIONS`), route routing, and SPA fallback GET handling [cite: 8, 9].
-    - Configurable request body/header limits and connection timeouts [cite: 8, 9].
+    - Worker thread pool architecture with a synchronized task queue and condition variable signaling.
+    - Zero external dependencies; built using standard POSIX sockets and native C++ threads.
+    - Built-in CORS preflight handling (`OPTIONS`), route routing, and SPA fallback GET handling.
+    - Configurable request body/header limits and connection timeouts.
 
 - **Lightweight JSON & Database Engine (`Database`, `Json`):**
-    - Type-safe DOM-style JSON parser and serializer backed by `std::variant` [cite: 8].
+    - Type-safe DOM-style JSON parser and serializer backed by `std::variant`.
     - File-backed JSON database supporting SQL-like table schemas, column types (`integer`, `string`, `boolean`, `float`, `array`, `object`), auto-increment primary keys, and uniqueness constraints.
     - CRUD operations with filter dictionaries and lambda predicates.
 
 - **Resilient Thin-Client Runtime:**
-    - Microscopic inline JavaScript runtime powering DOM diffing and keyed reconciliation (`reconcileChildren`) [cite: 7].
-    - Built-in loading states (`data-loading`, `.keet-pending`, `.keet-submitting`) and toast notification system [cite: 7].
-    - Component error boundaries (`createErrorBoundaryNode`) to isolate rendering faults gracefully [cite: 7].
+    - Microscopic inline JavaScript runtime powering DOM diffing and keyed reconciliation (`reconcileChildren`).
+    - Built-in loading states (`data-loading`, `.keet-pending`, `.keet-submitting`) and toast notification system.
+    - Component error boundaries (`createErrorBoundaryNode`) to isolate rendering faults gracefully.
 
 ---
 
@@ -150,11 +150,11 @@ int main() {
 
 ## Architecture Overview
 
-1. **Client Request:** The browser requests `/` and receives a minimal HTML shell with pre-compiled CSS and a lightweight Virtual DOM mounting runtime [cite: 7].
-2. **Initial Tree Fetch:** The client requests `/vdom` [cite: 7]. The server evaluates the root component's `render()` tree, registers event callbacks to unique handler IDs, serializes the tree to JSON, and returns it [cite: 7, 8, 11].
-3. **Event Dispatch:** User interactions (`click`, `submit`, `input`, `keydown`) trigger asynchronous POST requests to `/event` with target handler IDs and payloads [cite: 7, 11].
-4. **Server Re-Render & Patch:** Keet executes the associated C++ callback, modifies the persistent session state, re-renders the component tree, and returns the updated VNode JSON [cite: 7, 11].
-5. **DOM Diffing:** The client's reconciliation algorithm (`patchDom`) performs minimal in-place updates on the browser DOM without full-page reloads [cite: 7].
+1. **Client Request:** The browser requests `/` and receives a minimal HTML shell with pre-compiled CSS and a lightweight Virtual DOM mounting runtime.
+2. **Initial Tree Fetch:** The client requests `/vdom`. The server evaluates the root component's `render()` tree, registers event callbacks to unique handler IDs, serializes the tree to JSON, and returns it.
+3. **Event Dispatch:** User interactions (`click`, `submit`, `input`, `keydown`) trigger asynchronous POST requests to `/event` with target handler IDs and payloads.
+4. **Server Re-Render & Patch:** Keet executes the associated C++ callback, modifies the persistent session state, re-renders the component tree, and returns the updated VNode JSON.
+5. **DOM Diffing:** The client's reconciliation algorithm (`patchDom`) performs minimal in-place updates on the browser DOM without full-page reloads.
 
 ---
 
