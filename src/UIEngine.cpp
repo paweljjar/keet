@@ -5,11 +5,14 @@
 #include "keet/UIEngine.h"
 
 #include <algorithm>
+#include <fcntl.h>
 #include <mutex>
 #include <netdb.h>
+#include <poll.h>
 #include <set>
 #include <sstream>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <utility>
 
@@ -117,6 +120,15 @@ namespace UIEngine {
             return id;
         }
 
+        VNode createErrorBoundaryNode(const std::string& errorMsg) {
+            return VNode::el("div", {
+                {"style", "margin: 20px; padding: 16px 20px; border: 1px solid #f87171; background: #fef2f2; border-radius: 8px; color: #991b1b; font-family: system-ui, sans-serif;"}
+            }, {
+                VNode::el("h3", {{"style", "margin: 0 0 8px 0; color: #b91c1c;"}}, { VNode::textNode("Component Render Error") }),
+                VNode::el("p", {{"style", "margin: 0; font-family: monospace; font-size: 13px;"}}, { VNode::textNode(errorMsg) })
+            });
+        }
+
         HTTPServer::Json renderRootVNode(const std::function<VNode()>& rootFactory) { // Clear handler registry, render the root VNode tree, reconcile unmounts, and serialize to JSON
             Detail::resetRenderContext();
             const auto session = SessionContext::getCurrentSession();
@@ -124,12 +136,25 @@ namespace UIEngine {
                 std::lock_guard lock(session->mutex);
                 session->handlerRegistry.clear();
                 session->nextHandlerId = 0;
-                VNode rootNode = rootFactory();
+                VNode rootNode;
+                try {
+                    rootNode = rootFactory();
+                } catch (const std::exception& e) {
+                    rootNode = createErrorBoundaryNode(e.what());
+                } catch (...) {
+                    rootNode = createErrorBoundaryNode("An unknown render error occurred");
+                }
                 if (Detail::reconcileUnmountedComponents()) {
                     Detail::resetRenderContext();
                     session->handlerRegistry.clear();
                     session->nextHandlerId = 0;
-                    rootNode = rootFactory();
+                    try {
+                        rootNode = rootFactory();
+                    } catch (const std::exception& e) {
+                        rootNode = createErrorBoundaryNode(e.what());
+                    } catch (...) {
+                        rootNode = createErrorBoundaryNode("An unknown render error occurred");
+                    }
                     Detail::reconcileUnmountedComponents();
                 }
                 return rootNode.toJson();
@@ -137,12 +162,25 @@ namespace UIEngine {
             std::lock_guard lock(fallbackHandlerMutex);
             fallbackHandlerRegistry.clear();
             fallbackNextHandlerId = 0;
-            VNode rootNode = rootFactory();
+            VNode rootNode;
+            try {
+                rootNode = rootFactory();
+            } catch (const std::exception& e) {
+                rootNode = createErrorBoundaryNode(e.what());
+            } catch (...) {
+                rootNode = createErrorBoundaryNode("An unknown render error occurred");
+            }
             if (Detail::reconcileUnmountedComponents()) {
                 Detail::resetRenderContext();
                 fallbackHandlerRegistry.clear();
                 fallbackNextHandlerId = 0;
-                rootNode = rootFactory();
+                try {
+                    rootNode = rootFactory();
+                } catch (const std::exception& e) {
+                    rootNode = createErrorBoundaryNode(e.what());
+                } catch (...) {
+                    rootNode = createErrorBoundaryNode("An unknown render error occurred");
+                }
                 Detail::reconcileUnmountedComponents();
             }
             return rootNode.toJson();
@@ -152,6 +190,7 @@ namespace UIEngine {
             std::string host = "localhost"; // Target hostname or IPv4/IPv6 address
             std::string port = "80"; // Target TCP port string
             std::string path = "/"; // Request path including optional query string
+            bool isHttps = false; // True if scheme is https://
         };
 
         ParsedUrl parseHttpUrl(const std::string& rawUrl) { // Parse a full or relative URL into host, port, and path components
@@ -164,13 +203,15 @@ namespace UIEngine {
                 fullUrl = base + (fullUrl.starts_with("/") ? fullUrl : "/" + fullUrl);
             }
 
-            if (fullUrl.starts_with("http://")) {
-                fullUrl = fullUrl.substr(7);
-            } else if (fullUrl.starts_with("https://")) {
+            ParsedUrl out;
+            if (fullUrl.starts_with("https://")) {
+                out.isHttps = true;
                 fullUrl = fullUrl.substr(8);
+            } else if (fullUrl.starts_with("http://")) {
+                out.isHttps = false;
+                fullUrl = fullUrl.substr(7);
             }
 
-            ParsedUrl out;
             const size_t slashPos = fullUrl.find('/');
             std::string authority = slashPos == std::string::npos ? fullUrl : fullUrl.substr(0, slashPos);
             out.path = slashPos == std::string::npos ? "/" : fullUrl.substr(slashPos);
@@ -181,7 +222,7 @@ namespace UIEngine {
                 out.port = authority.substr(colonPos + 1);
             } else {
                 out.host = authority;
-                out.port = "80";
+                out.port = out.isHttps ? "443" : "80";
             }
             return out;
         }
@@ -319,7 +360,13 @@ namespace UIEngine {
     }
 
     FetchResponse fetch(const std::string& urlOrEndpoint, const FetchOptions& options) { // Execute a synchronous HTTP request against the backend API or a full URL
-        const auto [host, port, path] = parseHttpUrl(urlOrEndpoint);
+        const auto [host, port, path, isHttps] = parseHttpUrl(urlOrEndpoint);
+
+        if (isHttps) {
+            // Note: Native HTTPS/TLS requires OpenSSL or a TLS transport layer.
+            // Rather than hanging or transmitting raw plaintext to port 443, fail gracefully.
+            return FetchResponse{.status = 0, .rawBody = "HTTPS requires TLS transport which is not enabled"};
+        }
 
         addrinfo hints{};
         hints.ai_family = AF_UNSPEC;
@@ -331,12 +378,38 @@ namespace UIEngine {
         }
 
         int sock = -1;
+        const int connectTimeoutMs = static_cast<int>(options.connectTimeout.count());
+
         for (addrinfo* p = res; p != nullptr; p = p->ai_next) {
             sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
             if (sock < 0) continue;
-            if (connect(sock, p->ai_addr, p->ai_addrlen) == 0) {
+
+            // Set non-blocking to honor connectTimeout
+            const int flags = fcntl(sock, F_GETFL, 0);
+            fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+            const int connRes = connect(sock, p->ai_addr, p->ai_addrlen);
+            if (connRes == 0) {
+                // Connected immediately, restore blocking flags
+                fcntl(sock, F_SETFL, flags);
                 break;
             }
+
+            if (errno == EINPROGRESS) {
+                pollfd pfd{};
+                pfd.fd = sock;
+                pfd.events = POLLOUT;
+                const int pollRes = poll(&pfd, 1, connectTimeoutMs > 0 ? connectTimeoutMs : -1);
+                if (pollRes > 0 && (pfd.revents & POLLOUT)) {
+                    int sockErr = 0;
+                    socklen_t errLen = sizeof(sockErr);
+                    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &sockErr, &errLen) == 0 && sockErr == 0) {
+                        fcntl(sock, F_SETFL, flags);
+                        break;
+                    }
+                }
+            }
+
             close(sock);
             sock = -1;
         }
@@ -344,6 +417,16 @@ namespace UIEngine {
 
         if (sock < 0) {
             return FetchResponse{.status = 0, .rawBody = ""};
+        }
+
+        // Apply read/write socket timeouts (SO_RCVTIMEO / SO_SNDTIMEO)
+        const auto timeoutMs = options.timeout.count();
+        if (timeoutMs > 0) {
+            timeval tv{};
+            tv.tv_sec = static_cast<time_t>(timeoutMs / 1000);
+            tv.tv_usec = static_cast<suseconds_t>((timeoutMs % 1000) * 1000);
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
         }
 
         const std::string serializedBody = options.body.isNull() ? "" : options.body.dump();
@@ -404,6 +487,12 @@ namespace UIEngine {
         std::string httpVersion;
         headerStream >> httpVersion >> response.status;
         return response;
+    }
+
+    std::future<FetchResponse> fetchAsync(const std::string& urlOrEndpoint, const FetchOptions& options) { // Execute an asynchronous non-blocking HTTP request
+        return std::async(std::launch::async, [urlOrEndpoint, options] {
+            return fetch(urlOrEndpoint, options);
+        });
     }
 
     namespace Detail {
@@ -818,9 +907,46 @@ namespace UIEngine {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>)HTML" << pageTitle << R"HTML(</title>
     <link rel="stylesheet" href="/styles.css">
+    <style>
+        .keet-pending, [data-loading="true"] {
+            opacity: 0.7 !important;
+            cursor: wait !important;
+            pointer-events: none !important;
+            transition: opacity 0.15s ease-in-out;
+        }
+        form.keet-submitting {
+            cursor: wait !important;
+        }
+        .keet-error-toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            max-width: 420px;
+            padding: 12px 18px;
+            background: #ef4444;
+            color: #ffffff;
+            font-family: system-ui, -apple-system, sans-serif;
+            font-size: 14px;
+            line-height: 1.4;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 999999;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .keet-error-toast.keet-show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    </style>
 </head>
 <body>
     <div id="root"></div>
+    <div id="keet-toast-container"></div>
     <script>
         let currentVNode = null;
         let currentSessionId = (window.crypto && window.crypto.randomUUID)
@@ -879,7 +1005,54 @@ namespace UIEngine {
             }
         }
 
-        async function dispatchEvent(handlerId, eventPayload) {
+        function showToast(message, isError = true) {
+            const container = document.getElementById("keet-toast-container");
+            if (!container) return;
+            const toast = document.createElement("div");
+            toast.className = "keet-error-toast";
+            if (!isError) {
+                toast.style.background = "#059669";
+            }
+            toast.textContent = message;
+            container.appendChild(toast);
+            requestAnimationFrame(() => {
+                toast.classList.add("keet-show");
+            });
+            setTimeout(() => {
+                toast.classList.remove("keet-show");
+                setTimeout(() => {
+                    if (toast.parentNode === container) {
+                        container.removeChild(toast);
+                    }
+                }, 250);
+            }, 4000);
+        }
+
+        async function dispatchEvent(handlerId, eventPayload, triggerEl = null) {
+            let origDisabled = false;
+            let hadDisabledProp = false;
+            let origText = null;
+            let formEl = null;
+
+            if (triggerEl && triggerEl.nodeType === 1) {
+                triggerEl.classList.add("keet-pending");
+                triggerEl.setAttribute("data-loading", "true");
+                if ("disabled" in triggerEl) {
+                    hadDisabledProp = true;
+                    origDisabled = triggerEl.disabled;
+                    triggerEl.disabled = true;
+                }
+                const loadingText = triggerEl.getAttribute("data-loading-text");
+                if (loadingText !== null && loadingText !== "") {
+                    origText = triggerEl.textContent;
+                    triggerEl.textContent = loadingText;
+                }
+                formEl = triggerEl.closest ? triggerEl.closest("form") : null;
+                if (formEl) {
+                    formEl.classList.add("keet-submitting");
+                }
+            }
+
             try {
                 const sid = getSessionId();
                 const res = await fetch("/event", {
@@ -903,9 +1076,33 @@ namespace UIEngine {
                     if (vdomRes.ok) {
                         renderTree(await vdomRes.json());
                     }
+                } else {
+                    let errMsg = "Server action failed (HTTP " + res.status + ")";
+                    try {
+                        const errData = await res.json();
+                        if (errData && errData.error) {
+                            errMsg = errData.error;
+                        }
+                    } catch (_) {}
+                    showToast(errMsg, true);
                 }
             } catch (err) {
                 console.error("Event dispatch failed:", err);
+                showToast("Network request failed: " + (err.message || "Connection error"), true);
+            } finally {
+                if (triggerEl && triggerEl.nodeType === 1 && document.body.contains(triggerEl)) {
+                    triggerEl.classList.remove("keet-pending");
+                    triggerEl.removeAttribute("data-loading");
+                    if (hadDisabledProp) {
+                        triggerEl.disabled = origDisabled;
+                    }
+                    if (origText !== null) {
+                        triggerEl.textContent = origText;
+                    }
+                }
+                if (formEl && document.body.contains(formEl)) {
+                    formEl.classList.remove("keet-submitting");
+                }
             }
         }
 
@@ -946,7 +1143,8 @@ namespace UIEngine {
                         for (const [field, val] of formData.entries()) {
                             form[field] = String(val);
                         }
-                        await dispatchEvent(value, { type: "submit", form });
+                        const submitter = e.submitter || el.querySelector("button[type='submit'], input[type='submit']") || el;
+                        await dispatchEvent(value, { type: "submit", form }, submitter);
                         el.reset();
                     };
                 } else if (key === "data-on-click") {
@@ -970,7 +1168,7 @@ namespace UIEngine {
                             ctrlKey: Boolean(e.ctrlKey),
                             shiftKey: Boolean(e.shiftKey),
                             metaKey: Boolean(e.metaKey)
-                        });
+                        }, el);
                     };
                 } else if (key === "data-on-input") {
                     el.oninput = async (e) => {
@@ -978,7 +1176,7 @@ namespace UIEngine {
                             type: "input",
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || ""),
                             checked: Boolean(e.target && "checked" in e.target ? e.target.checked : el.checked)
-                        });
+                        }, el);
                     };
                 } else if (key === "data-on-change") {
                     el.onchange = async (e) => {
@@ -986,7 +1184,7 @@ namespace UIEngine {
                             type: "change",
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || ""),
                             checked: Boolean(e.target && "checked" in e.target ? e.target.checked : el.checked)
-                        });
+                        }, el);
                     };
                 } else if (key === "data-on-keydown") {
                     el.onkeydown = async (e) => {
@@ -1000,7 +1198,7 @@ namespace UIEngine {
                             shiftKey: Boolean(e.shiftKey),
                             metaKey: Boolean(e.metaKey),
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
-                        });
+                        }, el);
                     };
                 } else if (key === "data-on-keyup") {
                     el.onkeyup = async (e) => {
@@ -1014,21 +1212,21 @@ namespace UIEngine {
                             shiftKey: Boolean(e.shiftKey),
                             metaKey: Boolean(e.metaKey),
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
-                        });
+                        }, el);
                     };
                 } else if (key === "data-on-focus") {
                     el.onfocus = async (e) => {
                         await dispatchEvent(value, {
                             type: "focus",
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
-                        });
+                        }, el);
                     };
                 } else if (key === "data-on-blur") {
                     el.onblur = async (e) => {
                         await dispatchEvent(value, {
                             type: "blur",
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
-                        });
+                        }, el);
                     };
                 } else if (!key.startsWith("data-on-")) {
                     const lower = key.toLowerCase();
@@ -1327,7 +1525,17 @@ namespace UIEngine {
             }
 
             if (targetHandler) {
-                targetHandler(event);
+                try {
+                    targetHandler(event);
+                } catch (const std::exception& ex) {
+                    res.setHeader("X-Route-Path", currentPath());
+                    HTTPServer::Server::sendJson(res, HTTP_INTERNAL_SERVER_ERROR, HTTPServer::Json::Object{{"error", std::string("Handler error: ") + ex.what()}});
+                    return;
+                } catch (...) {
+                    res.setHeader("X-Route-Path", currentPath());
+                    HTTPServer::Server::sendJson(res, HTTP_INTERNAL_SERVER_ERROR, HTTPServer::Json::Object{{"error", "Unknown handler error occurred"}});
+                    return;
+                }
                 const HTTPServer::Json vdomJson = renderRootVNode(factory);
                 res.setHeader("X-Route-Path", currentPath());
                 HTTPServer::Server::sendJson(res, HTTP_OK, vdomJson);
