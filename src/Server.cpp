@@ -3,6 +3,7 @@
 //
 
 #include "keet/Server.h"
+#include "keet/Json.h"
 
 #include <iomanip>
 #include <iostream>
@@ -10,8 +11,6 @@
 #include <ranges>
 #include <sstream>
 #include <unistd.h>
-
-#include "Json.h"
 
 namespace HTTPServer {
     bool ServerRequest::hasQuery(const std::string &key) const { // Check if a query parameter exists
