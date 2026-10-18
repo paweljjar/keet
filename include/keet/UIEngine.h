@@ -22,9 +22,23 @@
 
 namespace UIEngine {
     struct Event { // Represents a DOM event dispatched from the browser runtime to a C++ event handler
-        std::string type; // Event type name (e.g., "click", "submit", "input", "change")
-        std::string value; // Target input element value for "input" and "change" events
+        std::string type; // Event type name (e.g., "click", "submit", "input", "change", "keydown", "keyup", "focus", "blur")
+        std::string value; // Target input element value for input, change, keydown, focus, blur, etc.
         std::map<std::string, std::string> form; // Key-value map of submitted form fields for "submit" events
+
+        std::string key; // Key pressed for keyboard events (e.g., "Enter", "Escape", "a")
+        int keyCode = 0; // Legacy numeric key code (e.g., 13, 27)
+        std::string code; // Physical key code (e.g., "KeyA", "Enter")
+
+        bool checked = false; // Checked status for checkbox and radio inputs
+
+        double clientX = 0.0; // Horizontal client coordinate in pixels for mouse events
+        double clientY = 0.0; // Vertical client coordinate in pixels for mouse events
+
+        bool altKey = false; // True if Alt key was active during the event
+        bool ctrlKey = false; // True if Control key was active during the event
+        bool shiftKey = false; // True if Shift key was active during the event
+        bool metaKey = false; // True if Meta key was active during the event
     };
 
     using EventHandler = std::function<void(const Event&)>; // Callback signature for handling browser DOM events in C++

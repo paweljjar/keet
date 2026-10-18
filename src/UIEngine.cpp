@@ -88,6 +88,18 @@ namespace UIEngine {
             if (propName == "onChange" || propName == "onchange" || propName == "data-on-change") {
                 return "data-on-change";
             }
+            if (propName == "onKeyDown" || propName == "onkeydown" || propName == "data-on-keydown") {
+                return "data-on-keydown";
+            }
+            if (propName == "onKeyUp" || propName == "onkeyup" || propName == "data-on-keyup") {
+                return "data-on-keyup";
+            }
+            if (propName == "onFocus" || propName == "onfocus" || propName == "data-on-focus") {
+                return "data-on-focus";
+            }
+            if (propName == "onBlur" || propName == "onblur" || propName == "data-on-blur") {
+                return "data-on-blur";
+            }
             return propName;
         }
 
@@ -910,6 +922,10 @@ namespace UIEngine {
                     else if (key === "data-on-submit") el.onsubmit = null;
                     else if (key === "data-on-input") el.oninput = null;
                     else if (key === "data-on-change") el.onchange = null;
+                    else if (key === "data-on-keydown") el.onkeydown = null;
+                    else if (key === "data-on-keyup") el.onkeyup = null;
+                    else if (key === "data-on-focus") el.onfocus = null;
+                    else if (key === "data-on-blur") el.onblur = null;
                     else if (BOOLEAN_PROPS.has(lower) || (lower in el && typeof el[lower] === "boolean")) {
                         const domProp = (lower === "readonly") ? "readOnly" : lower;
                         if (domProp in el) el[domProp] = false;
@@ -946,15 +962,73 @@ namespace UIEngine {
                                 window.history.pushState({}, "", href);
                             }
                         }
-                        await dispatchEvent(value, { type: "click" });
+                        await dispatchEvent(value, {
+                            type: "click",
+                            clientX: Number(e.clientX || 0),
+                            clientY: Number(e.clientY || 0),
+                            altKey: Boolean(e.altKey),
+                            ctrlKey: Boolean(e.ctrlKey),
+                            shiftKey: Boolean(e.shiftKey),
+                            metaKey: Boolean(e.metaKey)
+                        });
                     };
                 } else if (key === "data-on-input") {
                     el.oninput = async (e) => {
-                        await dispatchEvent(value, { type: "input", value: e.target.value || "" });
+                        await dispatchEvent(value, {
+                            type: "input",
+                            value: (e.target && "value" in e.target) ? e.target.value : (el.value || ""),
+                            checked: Boolean(e.target && "checked" in e.target ? e.target.checked : el.checked)
+                        });
                     };
                 } else if (key === "data-on-change") {
                     el.onchange = async (e) => {
-                        await dispatchEvent(value, { type: "change", value: e.target.value || "" });
+                        await dispatchEvent(value, {
+                            type: "change",
+                            value: (e.target && "value" in e.target) ? e.target.value : (el.value || ""),
+                            checked: Boolean(e.target && "checked" in e.target ? e.target.checked : el.checked)
+                        });
+                    };
+                } else if (key === "data-on-keydown") {
+                    el.onkeydown = async (e) => {
+                        await dispatchEvent(value, {
+                            type: "keydown",
+                            key: String(e.key || ""),
+                            keyCode: Number(e.keyCode || 0),
+                            code: String(e.code || ""),
+                            altKey: Boolean(e.altKey),
+                            ctrlKey: Boolean(e.ctrlKey),
+                            shiftKey: Boolean(e.shiftKey),
+                            metaKey: Boolean(e.metaKey),
+                            value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
+                        });
+                    };
+                } else if (key === "data-on-keyup") {
+                    el.onkeyup = async (e) => {
+                        await dispatchEvent(value, {
+                            type: "keyup",
+                            key: String(e.key || ""),
+                            keyCode: Number(e.keyCode || 0),
+                            code: String(e.code || ""),
+                            altKey: Boolean(e.altKey),
+                            ctrlKey: Boolean(e.ctrlKey),
+                            shiftKey: Boolean(e.shiftKey),
+                            metaKey: Boolean(e.metaKey),
+                            value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
+                        });
+                    };
+                } else if (key === "data-on-focus") {
+                    el.onfocus = async (e) => {
+                        await dispatchEvent(value, {
+                            type: "focus",
+                            value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
+                        });
+                    };
+                } else if (key === "data-on-blur") {
+                    el.onblur = async (e) => {
+                        await dispatchEvent(value, {
+                            type: "blur",
+                            value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
+                        });
                     };
                 } else if (!key.startsWith("data-on-")) {
                     const lower = key.toLowerCase();
@@ -1211,6 +1285,36 @@ namespace UIEngine {
                         event.form[field] = val.asString();
                     }
                 }
+            }
+            if (obj.contains("key") && obj.at("key").isString()) {
+                event.key = obj.at("key").asString();
+            }
+            if (obj.contains("keyCode") && obj.at("keyCode").isNumber()) {
+                event.keyCode = static_cast<int>(obj.at("keyCode").asNumber());
+            }
+            if (obj.contains("code") && obj.at("code").isString()) {
+                event.code = obj.at("code").asString();
+            }
+            if (obj.contains("checked") && obj.at("checked").isBool()) {
+                event.checked = obj.at("checked").asBool();
+            }
+            if (obj.contains("clientX") && obj.at("clientX").isNumber()) {
+                event.clientX = obj.at("clientX").asNumber();
+            }
+            if (obj.contains("clientY") && obj.at("clientY").isNumber()) {
+                event.clientY = obj.at("clientY").asNumber();
+            }
+            if (obj.contains("altKey") && obj.at("altKey").isBool()) {
+                event.altKey = obj.at("altKey").asBool();
+            }
+            if (obj.contains("ctrlKey") && obj.at("ctrlKey").isBool()) {
+                event.ctrlKey = obj.at("ctrlKey").asBool();
+            }
+            if (obj.contains("shiftKey") && obj.at("shiftKey").isBool()) {
+                event.shiftKey = obj.at("shiftKey").asBool();
+            }
+            if (obj.contains("metaKey") && obj.at("metaKey").isBool()) {
+                event.metaKey = obj.at("metaKey").asBool();
             }
 
             EventHandler targetHandler;
