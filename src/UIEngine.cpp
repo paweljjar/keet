@@ -229,6 +229,7 @@ namespace UIEngine {
     }
 
     void Session::touch() { // Update lastAccessed timestamp to current steady clock time
+        std::lock_guard lock(mutex);
         lastAccessed = std::chrono::steady_clock::now();
     }
 
@@ -315,7 +316,12 @@ namespace UIEngine {
     void SessionManager::_pruneExpiredSessionsLocked() { // Prune sessions that have exceeded the configured TTL (must hold _mutex)
         const auto now = std::chrono::steady_clock::now();
         for (auto it = _sessions.begin(); it != _sessions.end(); ) {
-            if (now - it->second->lastAccessed > _ttl) {
+            bool isExpired = false;
+            {
+                std::lock_guard lock(it->second->mutex);
+                isExpired = (now - it->second->lastAccessed > _ttl);
+            }
+            if (isExpired) {
                 std::shared_ptr<Session> expiredSession = it->second;
                 it = _sessions.erase(it);
                 SessionContext sessionCtx(expiredSession);
