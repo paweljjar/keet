@@ -1,0 +1,163 @@
+# Keet 🦜
+
+A lightweight, high-performance, full-stack C++ micro-framework designed for building modern web applications with zero external dependencies.
+
+Keet provides an end-to-end web framework entirely written in modern C++ (C++20). It pairs a concurrent multi-threaded HTTP server and a file-backed JSON document database with a React-inspired server-driven Virtual DOM engine.
+
+---
+
+## Features
+
+- **Component-Driven C++ UI Engine (`UIEngine`):**
+    - Declarative Virtual DOM nodes (`VNode`) and tag helpers (`div`, `button`, `form`, `input`, `dialog`, etc.) [cite: 7, 11].
+    - Scoped persistent state via React-style `useState<T>` hooks [cite: 11].
+    - Component lifecycle hooks (`onMount`, `onUnmount`) with automatic scope tracking and cleanup [cite: 7, 11].
+    - Scoped CSS-in-C++ stylesheet aggregation (`StyleSheet`) served automatically at `/styles.css` [cite: 7, 11].
+    - Client-side routing (`Router`, `Link`) with pushState browser history [cite: 7, 11].
+    - Isolated multi-session state management (`SessionManager`) with configurable idle TTL pruning [cite: 7, 11].
+
+- **Concurrent Multi-Threaded HTTP Server (`HTTPServer`):**
+    - Worker thread pool architecture with a synchronized task queue and condition variable signaling [cite: 8, 9].
+    - Zero external dependencies; built using standard POSIX sockets and native C++ threads [cite: 8, 9].
+    - Built-in CORS preflight handling (`OPTIONS`), route routing, and SPA fallback GET handling [cite: 8, 9].
+    - Configurable request body/header limits and connection timeouts [cite: 8, 9].
+
+- **Lightweight JSON & Database Engine (`Database`, `Json`):**
+    - Type-safe DOM-style JSON parser and serializer backed by `std::variant` [cite: 8].
+    - File-backed JSON database supporting SQL-like table schemas, column types (`integer`, `string`, `boolean`, `float`, `array`, `object`), auto-increment primary keys, and uniqueness constraints.
+    - CRUD operations with filter dictionaries and lambda predicates.
+
+- **Resilient Thin-Client Runtime:**
+    - Microscopic inline JavaScript runtime powering DOM diffing and keyed reconciliation (`reconcileChildren`) [cite: 7].
+    - Built-in loading states (`data-loading`, `.keet-pending`, `.keet-submitting`) and toast notification system [cite: 7].
+    - Component error boundaries (`createErrorBoundaryNode`) to isolate rendering faults gracefully [cite: 7].
+
+---
+
+## Project Structure
+
+```text
+keet/
+├── CMakeLists.txt
+├── include/
+│   └── keet/
+│       ├── Database.h
+│       ├── Json.h
+│       ├── Server.h
+│       └── UIEngine.h
+└── src/
+    ├── Database.cpp
+    ├── Json.cpp
+    ├── Server.cpp
+    └── UIEngine.cpp
+```
+
+---
+
+## Getting Started
+
+### 1. Requirements
+- Modern C++ compiler supporting **C++20** (GCC 11+, Clang 13+, or Apple Clang 13+)
+- CMake 3.20+
+
+### 2. Integration via CMake
+
+#### As a Submodule or Subdirectory
+Add Keet to your project under `external/keet` and link against it in your `CMakeLists.txt`:
+
+```cmake
+cmake_minimum_required(VERSION 3.20)
+project(my_app LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+add_subdirectory(external/keet)
+
+add_executable(my_app main.cpp)
+target_link_libraries(my_app PRIVATE keet)
+```
+
+---
+
+## Quick Example
+
+Here is a minimal full-stack counter application built with Keet:
+
+```cpp
+#include <keet/Server.h>
+#include <keet/UIEngine.h>
+
+class CounterApp : public UIEngine::Component {
+public:
+    using Component::Component;
+
+    [[nodiscard]] std::string getComponentName() const override { return "CounterApp"; }
+
+    [[nodiscard]] UIEngine::VNode render() const override {
+        UIEngine::State<int> count = useState<int>("count", 0);
+
+        return UIEngine::Tags::main({{"class", "container"}}, {
+            UIEngine::Tags::h1({}, "Keet Counter"),
+            UIEngine::Tags::p({}, "Count: " + std::to_string(count.get())),
+            UIEngine::Tags::div({{"class", "actions"}}, {
+                UIEngine::Tags::button({
+                    {"class", "btn"},
+                    {"onClick", [count] { count.set(count.get() - 1); }}
+                }, "-1"),
+                UIEngine::Tags::button({
+                    {"class", "btn"},
+                    {"onClick", [count] { count.set(count.get() + 1); }}
+                }, "+1")
+            })
+        });
+    }
+
+    [[nodiscard]] UIEngine::StyleSheet styles() const override {
+        UIEngine::StyleSheet s;
+        s.rule(".container", {
+            {"font-family", "system-ui, -apple-system, sans-serif"},
+            {"max-width", "400px"},
+            {"margin", "50px auto"},
+            {"text-align", "center"}
+        })
+        .rule(".actions", {
+            {"display", "flex"},
+            {"justify-content", "center"},
+            {"gap", "10px"}
+        })
+        .rule(".btn", {
+            {"padding", "8px 16px"},
+            {"font-size", "16px"},
+            {"border-radius", "6px"},
+            {"cursor", "pointer"}
+        });
+        return s;
+    }
+};
+
+int main() {
+    HTTPServer::Server frontend(8080, "Frontend");
+
+    UIEngine::serveApp(frontend, CounterApp{}, {}, "http://localhost:8000", "Keet App");
+
+    frontend.start();
+    return 0;
+}
+```
+
+---
+
+## Architecture Overview
+
+1. **Client Request:** The browser requests `/` and receives a minimal HTML shell with pre-compiled CSS and a lightweight Virtual DOM mounting runtime [cite: 7].
+2. **Initial Tree Fetch:** The client requests `/vdom` [cite: 7]. The server evaluates the root component's `render()` tree, registers event callbacks to unique handler IDs, serializes the tree to JSON, and returns it [cite: 7, 8, 11].
+3. **Event Dispatch:** User interactions (`click`, `submit`, `input`, `keydown`) trigger asynchronous POST requests to `/event` with target handler IDs and payloads [cite: 7, 11].
+4. **Server Re-Render & Patch:** Keet executes the associated C++ callback, modifies the persistent session state, re-renders the component tree, and returns the updated VNode JSON [cite: 7, 11].
+5. **DOM Diffing:** The client's reconciliation algorithm (`patchDom`) performs minimal in-place updates on the browser DOM without full-page reloads [cite: 7].
+
+---
+
+## License
+
+MIT License.
