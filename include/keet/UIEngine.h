@@ -9,6 +9,7 @@
 #include <chrono>
 #include <concepts>
 #include <functional>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -84,6 +85,8 @@ namespace UIEngine {
         std::string method = "GET"; // HTTP request method (e.g., "GET", "POST", "DELETE")
         std::map<std::string, std::string> headers; // Optional custom HTTP headers to include in the request
         HTTPServer::Json body = nullptr; // Optional JSON payload serialized as the request body when non-null
+        std::chrono::milliseconds timeout{5000}; // Maximum socket read/write idle timeout in milliseconds (defaults to 5000ms)
+        std::chrono::milliseconds connectTimeout{3000}; // Maximum connection establishment timeout in milliseconds (defaults to 3000ms)
     };
 
     struct FetchResponse { // Response returned by UIEngine::fetch after completing an HTTP request
@@ -95,6 +98,7 @@ namespace UIEngine {
     };
 
     FetchResponse fetch(const std::string& urlOrEndpoint, const FetchOptions& options = {}); // Execute a synchronous HTTP request against the backend API or a full URL
+    std::future<FetchResponse> fetchAsync(const std::string& urlOrEndpoint, const FetchOptions& options = {}); // Execute an asynchronous non-blocking HTTP request
 
     struct Session { // Represents an isolated client or browser tab session holding scoped UI state and event handlers
         std::string id; // Unique session identifier token

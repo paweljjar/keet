@@ -5,11 +5,14 @@
 #include "keet/UIEngine.h"
 
 #include <algorithm>
+#include <fcntl.h>
 #include <mutex>
 #include <netdb.h>
+#include <poll.h>
 #include <set>
 #include <sstream>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <utility>
 
@@ -152,6 +155,7 @@ namespace UIEngine {
             std::string host = "localhost"; // Target hostname or IPv4/IPv6 address
             std::string port = "80"; // Target TCP port string
             std::string path = "/"; // Request path including optional query string
+            bool isHttps = false; // True if scheme is https://
         };
 
         ParsedUrl parseHttpUrl(const std::string& rawUrl) { // Parse a full or relative URL into host, port, and path components
@@ -164,13 +168,15 @@ namespace UIEngine {
                 fullUrl = base + (fullUrl.starts_with("/") ? fullUrl : "/" + fullUrl);
             }
 
-            if (fullUrl.starts_with("http://")) {
-                fullUrl = fullUrl.substr(7);
-            } else if (fullUrl.starts_with("https://")) {
+            ParsedUrl out;
+            if (fullUrl.starts_with("https://")) {
+                out.isHttps = true;
                 fullUrl = fullUrl.substr(8);
+            } else if (fullUrl.starts_with("http://")) {
+                out.isHttps = false;
+                fullUrl = fullUrl.substr(7);
             }
 
-            ParsedUrl out;
             const size_t slashPos = fullUrl.find('/');
             std::string authority = slashPos == std::string::npos ? fullUrl : fullUrl.substr(0, slashPos);
             out.path = slashPos == std::string::npos ? "/" : fullUrl.substr(slashPos);
@@ -181,7 +187,7 @@ namespace UIEngine {
                 out.port = authority.substr(colonPos + 1);
             } else {
                 out.host = authority;
-                out.port = "80";
+                out.port = out.isHttps ? "443" : "80";
             }
             return out;
         }
@@ -319,7 +325,13 @@ namespace UIEngine {
     }
 
     FetchResponse fetch(const std::string& urlOrEndpoint, const FetchOptions& options) { // Execute a synchronous HTTP request against the backend API or a full URL
-        const auto [host, port, path] = parseHttpUrl(urlOrEndpoint);
+        const auto [host, port, path, isHttps] = parseHttpUrl(urlOrEndpoint);
+
+        if (isHttps) {
+            // Note: Native HTTPS/TLS requires OpenSSL or a TLS transport layer.
+            // Rather than hanging or transmitting raw plaintext to port 443, fail gracefully.
+            return FetchResponse{.status = 0, .rawBody = "HTTPS requires TLS transport which is not enabled"};
+        }
 
         addrinfo hints{};
         hints.ai_family = AF_UNSPEC;
@@ -331,12 +343,38 @@ namespace UIEngine {
         }
 
         int sock = -1;
+        const int connectTimeoutMs = static_cast<int>(options.connectTimeout.count());
+
         for (addrinfo* p = res; p != nullptr; p = p->ai_next) {
             sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
             if (sock < 0) continue;
-            if (connect(sock, p->ai_addr, p->ai_addrlen) == 0) {
+
+            // Set non-blocking to honor connectTimeout
+            const int flags = fcntl(sock, F_GETFL, 0);
+            fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+            const int connRes = connect(sock, p->ai_addr, p->ai_addrlen);
+            if (connRes == 0) {
+                // Connected immediately, restore blocking flags
+                fcntl(sock, F_SETFL, flags);
                 break;
             }
+
+            if (errno == EINPROGRESS) {
+                pollfd pfd{};
+                pfd.fd = sock;
+                pfd.events = POLLOUT;
+                const int pollRes = poll(&pfd, 1, connectTimeoutMs > 0 ? connectTimeoutMs : -1);
+                if (pollRes > 0 && (pfd.revents & POLLOUT)) {
+                    int sockErr = 0;
+                    socklen_t errLen = sizeof(sockErr);
+                    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &sockErr, &errLen) == 0 && sockErr == 0) {
+                        fcntl(sock, F_SETFL, flags);
+                        break;
+                    }
+                }
+            }
+
             close(sock);
             sock = -1;
         }
@@ -344,6 +382,16 @@ namespace UIEngine {
 
         if (sock < 0) {
             return FetchResponse{.status = 0, .rawBody = ""};
+        }
+
+        // Apply read/write socket timeouts (SO_RCVTIMEO / SO_SNDTIMEO)
+        const auto timeoutMs = options.timeout.count();
+        if (timeoutMs > 0) {
+            timeval tv{};
+            tv.tv_sec = static_cast<time_t>(timeoutMs / 1000);
+            tv.tv_usec = static_cast<suseconds_t>((timeoutMs % 1000) * 1000);
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
         }
 
         const std::string serializedBody = options.body.isNull() ? "" : options.body.dump();
@@ -404,6 +452,12 @@ namespace UIEngine {
         std::string httpVersion;
         headerStream >> httpVersion >> response.status;
         return response;
+    }
+
+    std::future<FetchResponse> fetchAsync(const std::string& urlOrEndpoint, const FetchOptions& options) { // Execute an asynchronous non-blocking HTTP request
+        return std::async(std::launch::async, [urlOrEndpoint, options] {
+            return fetch(urlOrEndpoint, options);
+        });
     }
 
     namespace Detail {
