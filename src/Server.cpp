@@ -5,11 +5,13 @@
 #include "keet/Server.h"
 #include "keet/Json.h"
 
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
 #include <random>
 #include <ranges>
 #include <sstream>
+#include <sys/socket.h>
 #include <unistd.h>
 
 namespace HTTPServer {
@@ -99,9 +101,48 @@ namespace HTTPServer {
     }
 
     //region public methods
-    Server::Server(const int port, std::string name) : _port(port), _name(std::move(name)), _server_fd(-1), _address{} { // Constructor for the Server class, initializes the port, optional name, and sets the server file descriptor to -1 (indicating it's not yet created)
+    Server::Server(const int port, std::string name, const size_t threadPoolSize) : _port(port), _name(std::move(name)), _server_fd(-1), _address{} { // Constructor for the Server class, initializes the port, optional name, and worker pool configuration
         if (port < 0 || port > 65535) { // Validate the port number to ensure it's within the valid range for TCP/UDP ports
             throw std::invalid_argument("Port number must be between 0 and 65535"); // If the port number is invalid, throw an exception to indicate the error
+        }
+        if (threadPoolSize == 0) {
+            const unsigned int hw = std::thread::hardware_concurrency();
+            _threadPoolSize = hw > 0 ? std::max(4u, hw) : 8;
+        } else {
+            _threadPoolSize = threadPoolSize;
+        }
+    }
+
+    Server::~Server() { // Destructor ensuring listener socket is closed and worker threads are joined
+        stop();
+    }
+
+    void Server::stop() { // Stop server accept loop and shut down worker threads
+        if (!_running.exchange(false)) {
+            return;
+        }
+        if (_server_fd != -1) {
+            ::shutdown(_server_fd, SHUT_RDWR);
+            ::close(_server_fd);
+            _server_fd = -1;
+        }
+        _stopThreadPool();
+        _log("Server stopped");
+    }
+
+    size_t Server::getThreadPoolSize() const { // Return configured worker pool thread count
+        return _threadPoolSize;
+    }
+
+    void Server::setThreadPoolSize(const size_t size) { // Update configured worker pool thread count before server starts
+        if (_running) {
+            throw std::runtime_error("Cannot change thread pool size while server is running");
+        }
+        if (size == 0) {
+            const unsigned int hw = std::thread::hardware_concurrency();
+            _threadPoolSize = hw > 0 ? std::max(4u, hw) : 8;
+        } else {
+            _threadPoolSize = size;
         }
     }
 
@@ -118,8 +159,11 @@ namespace HTTPServer {
             _logError("Error listening on socket"); // Print an error message to standard error indicating that the socket listening failed
             return;
         }
-        _log("Server started on port " + std::to_string(this->getPort())); // Print a message to standard output indicating that the server has started and is listening on the specified port
-        _acceptLoop(); // Enter the accept loop to continuously accept incoming client connections and handle them
+        _running = true;
+        _startThreadPool();
+        _log("Server started on port " + std::to_string(this->getPort()) + " with " + std::to_string(_threadPoolSize) + " worker threads");
+        _acceptLoop(); // Enter the accept loop to continuously accept incoming client connections and hand them off to workers
+        _stopThreadPool();
     }
 
     std::thread Server::startAsync() { // Start the server in a separate background thread so multiple servers can run concurrently
@@ -220,7 +264,7 @@ namespace HTTPServer {
 
     bool Server::_listenPort() const { // Start listening for incoming connections on the bound socket, allowing the server to accept client requests
         _log("Listening on socket..."); // Print a message to standard output indicating that the server is starting to listen for incoming connections
-        if (listen(this->_server_fd, 10) == -1) { // Call the listen function on the socket, specifying a backlog of 10 (the maximum number of pending connections), and check for errors (listen returns -1 on failure)
+        if (listen(this->_server_fd, 128) == -1) { // Call the listen function on the socket with connection backlog of 128
             _logError("Failed to listen on socket"); // Print an error message to standard error indicating that the server failed to start listening on the socket
             return false;
         }
@@ -349,16 +393,70 @@ namespace HTTPServer {
         close(client_fd); // Close the client connection socket since HTTP Connection: close is used
     }
 
-    void Server::_acceptLoop() { // Main accept loop running continuously to accept and handle incoming client TCP connections
-        while (true) { // Enter an infinite loop to keep accepting connections as long as the server is running
+    void Server::_startThreadPool() { // Spawn configured worker threads to process client connections concurrently
+        _workers.reserve(_threadPoolSize);
+        for (size_t i = 0; i < _threadPoolSize; ++i) {
+            _workers.emplace_back([this] {
+                _workerLoop();
+            });
+        }
+    }
+
+    void Server::_stopThreadPool() { // Drain pending client connections, wake all workers, and join worker threads
+        {
+            std::lock_guard<std::mutex> lock(_queueMutex);
+            while (!_clientQueue.empty()) {
+                const int fd = _clientQueue.front();
+                _clientQueue.pop();
+                close(fd);
+            }
+        }
+        _cv.notify_all();
+        for (auto& worker : _workers) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+        _workers.clear();
+    }
+
+    void Server::_workerLoop() { // Worker thread function pulling client file descriptors and processing HTTP requests
+        while (true) {
+            int client_fd = -1;
+            {
+                std::unique_lock<std::mutex> lock(_queueMutex);
+                _cv.wait(lock, [this] {
+                    return !_running || !_clientQueue.empty();
+                });
+                if (!_running && _clientQueue.empty()) {
+                    break;
+                }
+                client_fd = _clientQueue.front();
+                _clientQueue.pop();
+            }
+            if (client_fd != -1) {
+                _handleClient(client_fd);
+            }
+        }
+    }
+
+    void Server::_acceptLoop() { // Main accept loop running continuously to accept client TCP connections and enqueue them for worker threads
+        while (_running) { // Keep accepting connections as long as the server is running
             sockaddr_in client{}; // Allocate a sockaddr_in structure to store incoming client connection address info
             socklen_t len = sizeof(client); // Initialize address structure length for the accept system call
-            const int client_fd = accept(this->_server_fd, reinterpret_cast<sockaddr*>(&client), &len); // Accept the next connection on the server socket, returning a client file descriptor
-            if (client_fd == -1) { // Check if the accept call failed (accept returns -1 on error)
-                _logError("Failed to accept connection"); // Print an error message to standard error indicating that connection acceptance failed
-                continue; // Continue to the next loop iteration to attempt accepting subsequent connections
+            const int client_fd = accept(this->_server_fd, reinterpret_cast<sockaddr*>(&client), &len); // Accept the next connection on the server socket
+            if (client_fd == -1) { // Check if the accept call failed
+                if (!_running) {
+                    break; // Server stopped, exit accept loop cleanly
+                }
+                _logError("Failed to accept connection: " + std::string(strerror(errno)));
+                continue;
             }
-            _handleClient(client_fd); // Handle the accepted client connection synchronously using the client file descriptor
+            {
+                std::lock_guard<std::mutex> lock(_queueMutex);
+                _clientQueue.push(client_fd);
+            }
+            _cv.notify_one(); // Wake an available worker thread in the pool to process this connection
         }
     }
 
