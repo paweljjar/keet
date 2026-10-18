@@ -120,6 +120,15 @@ namespace UIEngine {
             return id;
         }
 
+        VNode createErrorBoundaryNode(const std::string& errorMsg) {
+            return VNode::el("div", {
+                {"style", "margin: 20px; padding: 16px 20px; border: 1px solid #f87171; background: #fef2f2; border-radius: 8px; color: #991b1b; font-family: system-ui, sans-serif;"}
+            }, {
+                VNode::el("h3", {{"style", "margin: 0 0 8px 0; color: #b91c1c;"}}, { VNode::textNode("Component Render Error") }),
+                VNode::el("p", {{"style", "margin: 0; font-family: monospace; font-size: 13px;"}}, { VNode::textNode(errorMsg) })
+            });
+        }
+
         HTTPServer::Json renderRootVNode(const std::function<VNode()>& rootFactory) { // Clear handler registry, render the root VNode tree, reconcile unmounts, and serialize to JSON
             Detail::resetRenderContext();
             const auto session = SessionContext::getCurrentSession();
@@ -127,12 +136,25 @@ namespace UIEngine {
                 std::lock_guard lock(session->mutex);
                 session->handlerRegistry.clear();
                 session->nextHandlerId = 0;
-                VNode rootNode = rootFactory();
+                VNode rootNode;
+                try {
+                    rootNode = rootFactory();
+                } catch (const std::exception& e) {
+                    rootNode = createErrorBoundaryNode(e.what());
+                } catch (...) {
+                    rootNode = createErrorBoundaryNode("An unknown render error occurred");
+                }
                 if (Detail::reconcileUnmountedComponents()) {
                     Detail::resetRenderContext();
                     session->handlerRegistry.clear();
                     session->nextHandlerId = 0;
-                    rootNode = rootFactory();
+                    try {
+                        rootNode = rootFactory();
+                    } catch (const std::exception& e) {
+                        rootNode = createErrorBoundaryNode(e.what());
+                    } catch (...) {
+                        rootNode = createErrorBoundaryNode("An unknown render error occurred");
+                    }
                     Detail::reconcileUnmountedComponents();
                 }
                 return rootNode.toJson();
@@ -140,12 +162,25 @@ namespace UIEngine {
             std::lock_guard lock(fallbackHandlerMutex);
             fallbackHandlerRegistry.clear();
             fallbackNextHandlerId = 0;
-            VNode rootNode = rootFactory();
+            VNode rootNode;
+            try {
+                rootNode = rootFactory();
+            } catch (const std::exception& e) {
+                rootNode = createErrorBoundaryNode(e.what());
+            } catch (...) {
+                rootNode = createErrorBoundaryNode("An unknown render error occurred");
+            }
             if (Detail::reconcileUnmountedComponents()) {
                 Detail::resetRenderContext();
                 fallbackHandlerRegistry.clear();
                 fallbackNextHandlerId = 0;
-                rootNode = rootFactory();
+                try {
+                    rootNode = rootFactory();
+                } catch (const std::exception& e) {
+                    rootNode = createErrorBoundaryNode(e.what());
+                } catch (...) {
+                    rootNode = createErrorBoundaryNode("An unknown render error occurred");
+                }
                 Detail::reconcileUnmountedComponents();
             }
             return rootNode.toJson();
@@ -882,10 +917,36 @@ namespace UIEngine {
         form.keet-submitting {
             cursor: wait !important;
         }
+        .keet-error-toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            max-width: 420px;
+            padding: 12px 18px;
+            background: #ef4444;
+            color: #ffffff;
+            font-family: system-ui, -apple-system, sans-serif;
+            font-size: 14px;
+            line-height: 1.4;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 999999;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .keet-error-toast.keet-show {
+            opacity: 1;
+            transform: translateY(0);
+        }
     </style>
 </head>
 <body>
     <div id="root"></div>
+    <div id="keet-toast-container"></div>
     <script>
         let currentVNode = null;
         let currentSessionId = (window.crypto && window.crypto.randomUUID)
@@ -944,6 +1005,29 @@ namespace UIEngine {
             }
         }
 
+        function showToast(message, isError = true) {
+            const container = document.getElementById("keet-toast-container");
+            if (!container) return;
+            const toast = document.createElement("div");
+            toast.className = "keet-error-toast";
+            if (!isError) {
+                toast.style.background = "#059669";
+            }
+            toast.textContent = message;
+            container.appendChild(toast);
+            requestAnimationFrame(() => {
+                toast.classList.add("keet-show");
+            });
+            setTimeout(() => {
+                toast.classList.remove("keet-show");
+                setTimeout(() => {
+                    if (toast.parentNode === container) {
+                        container.removeChild(toast);
+                    }
+                }, 250);
+            }, 4000);
+        }
+
         async function dispatchEvent(handlerId, eventPayload, triggerEl = null) {
             let origDisabled = false;
             let hadDisabledProp = false;
@@ -992,9 +1076,19 @@ namespace UIEngine {
                     if (vdomRes.ok) {
                         renderTree(await vdomRes.json());
                     }
+                } else {
+                    let errMsg = "Server action failed (HTTP " + res.status + ")";
+                    try {
+                        const errData = await res.json();
+                        if (errData && errData.error) {
+                            errMsg = errData.error;
+                        }
+                    } catch (_) {}
+                    showToast(errMsg, true);
                 }
             } catch (err) {
                 console.error("Event dispatch failed:", err);
+                showToast("Network request failed: " + (err.message || "Connection error"), true);
             } finally {
                 if (triggerEl && triggerEl.nodeType === 1 && document.body.contains(triggerEl)) {
                     triggerEl.classList.remove("keet-pending");
@@ -1431,7 +1525,17 @@ namespace UIEngine {
             }
 
             if (targetHandler) {
-                targetHandler(event);
+                try {
+                    targetHandler(event);
+                } catch (const std::exception& ex) {
+                    res.setHeader("X-Route-Path", currentPath());
+                    HTTPServer::Server::sendJson(res, HTTP_INTERNAL_SERVER_ERROR, HTTPServer::Json::Object{{"error", std::string("Handler error: ") + ex.what()}});
+                    return;
+                } catch (...) {
+                    res.setHeader("X-Route-Path", currentPath());
+                    HTTPServer::Server::sendJson(res, HTTP_INTERNAL_SERVER_ERROR, HTTPServer::Json::Object{{"error", "Unknown handler error occurred"}});
+                    return;
+                }
                 const HTTPServer::Json vdomJson = renderRootVNode(factory);
                 res.setHeader("X-Route-Path", currentPath());
                 HTTPServer::Server::sendJson(res, HTTP_OK, vdomJson);
