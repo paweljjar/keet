@@ -628,6 +628,8 @@ namespace UIEngine {
             }
             if (val.isString()) {
                 propsObj[propKey] = val.asString(); // Insert the attribute name and string value into the JSON object
+            } else if (val.isBool()) {
+                propsObj[propKey] = val.asBool(); // Insert the attribute name and boolean value into the JSON object
             } else if (val.isHandler()) {
                 propsObj[normalizeEventAttr(propKey)] = registerEventHandler(val.asHandler()); // Register C++ callback and emit its handler ID
             }
@@ -654,10 +656,28 @@ namespace UIEngine {
 
     std::string Component::getProp(const std::string& key, const std::string& fallback) const { // Retrieve a string property value by key, or return fallback if absent
         const auto it = _props.find(key); // Look up the key in the component's _props map
-        if (it != _props.end() && it->second.isString()) {
-            return it->second.asString(); // Return the found string property value
+        if (it != _props.end()) {
+            if (it->second.isString()) {
+                return it->second.asString(); // Return the found string property value
+            }
+            if (it->second.isBool()) {
+                return it->second.asBool() ? "true" : "false"; // String representation of boolean property
+            }
         }
-        return fallback; // Return the fallback string if missing or not a string prop
+        return fallback; // Return the fallback string if missing or not a string/bool prop
+    }
+
+    bool Component::getBoolProp(const std::string& key, bool fallback) const { // Retrieve a boolean property value by key, or return fallback if absent
+        const auto it = _props.find(key); // Look up the key in the component's _props map
+        if (it != _props.end()) {
+            if (it->second.isBool()) {
+                return it->second.asBool();
+            }
+            if (it->second.isString()) {
+                return it->second.asString() == "true" || it->second.asString() == "1";
+            }
+        }
+        return fallback; // Return the fallback boolean if missing or not matching
     }
 
     EventHandler Component::getCallback(const std::string& key) const { // Retrieve an EventHandler callback prop by key, or an empty function if absent
@@ -744,7 +764,11 @@ namespace UIEngine {
     VNode Link(const std::string& to, const std::string& text, Props props) { // Create a client-side navigation <a> element that switches routes without reloading the page
         const std::string targetPath = normalizeRoutePath(to);
         const std::string activePath = currentPath();
-        const bool isActive = (activePath == targetPath) || (activePath == "/" && props.contains("defaultActive") && props.at("defaultActive").isString() && props.at("defaultActive").asString() == "true");
+        const bool defaultActive = props.contains("defaultActive") && (
+            (props.at("defaultActive").isBool() && props.at("defaultActive").asBool()) ||
+            (props.at("defaultActive").isString() && props.at("defaultActive").asString() == "true")
+        );
+        const bool isActive = (activePath == targetPath) || (activePath == "/" && defaultActive);
         props.erase("defaultActive");
 
         std::string className = "nav-link";
@@ -873,14 +897,27 @@ namespace UIEngine {
             }
         }
 
+        const BOOLEAN_PROPS = new Set([
+            "disabled", "checked", "readonly", "required",
+            "selected", "autofocus", "multiple", "hidden", "open", "novalidate", "reversed"
+        ]);
+
         function applyProps(el, oldProps = {}, newProps = {}) {
             for (const key of Object.keys(oldProps)) {
                 if (!(key in newProps)) {
+                    const lower = key.toLowerCase();
                     if (key === "data-on-click") el.onclick = null;
                     else if (key === "data-on-submit") el.onsubmit = null;
                     else if (key === "data-on-input") el.oninput = null;
                     else if (key === "data-on-change") el.onchange = null;
-                    else el.removeAttribute(key);
+                    else if (BOOLEAN_PROPS.has(lower) || (lower in el && typeof el[lower] === "boolean")) {
+                        const domProp = (lower === "readonly") ? "readOnly" : lower;
+                        if (domProp in el) el[domProp] = false;
+                        el.removeAttribute(key);
+                        if (lower !== key) el.removeAttribute(lower);
+                    } else {
+                        el.removeAttribute(key);
+                    }
                 }
             }
             for (const [key, value] of Object.entries(newProps)) {
@@ -920,10 +957,25 @@ namespace UIEngine {
                         await dispatchEvent(value, { type: "change", value: e.target.value || "" });
                     };
                 } else if (!key.startsWith("data-on-")) {
-                    if (key === "value" && "value" in el) {
-                        el.value = value;
+                    const lower = key.toLowerCase();
+                    const isBoolProp = BOOLEAN_PROPS.has(lower) || typeof value === "boolean";
+                    if (isBoolProp) {
+                        const domProp = (lower === "readonly") ? "readOnly" : lower;
+                        const isTruthy = value === true || value === "true" || value === "";
+                        if (isTruthy) {
+                            if (domProp in el) el[domProp] = true;
+                            el.setAttribute(key, "");
+                        } else {
+                            if (domProp in el) el[domProp] = false;
+                            el.removeAttribute(key);
+                            if (lower !== key) el.removeAttribute(lower);
+                        }
+                    } else {
+                        if (key === "value" && "value" in el) {
+                            el.value = value;
+                        }
+                        el.setAttribute(key, value);
                     }
-                    el.setAttribute(key, value);
                 }
             }
         }

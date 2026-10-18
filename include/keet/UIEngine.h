@@ -29,33 +29,38 @@ namespace UIEngine {
 
     using EventHandler = std::function<void(const Event&)>; // Callback signature for handling browser DOM events in C++
 
-    class PropValue { // Variant wrapper holding either a string HTML attribute or a C++ event handler callback
+    class PropValue { // Variant wrapper holding either a string HTML attribute, boolean property, or a C++ event handler callback
         public:
             PropValue() : _value(std::string{}) {} // Default constructor initializing an empty string property
             PropValue(const char* s) : _value(std::string(s ? s : "")) {} // Implicit constructor from C-string literal
             PropValue(std::string s) : _value(std::move(s)) {} // Implicit constructor from std::string
+            PropValue(bool b) : _value(b) {} // Implicit constructor from boolean
             PropValue(EventHandler handler) : _value(std::move(handler)) {} // Implicit constructor from an EventHandler function
 
             template <typename Fn>
             requires (!std::same_as<std::decay_t<Fn>, PropValue> &&
+                      !std::same_as<std::decay_t<Fn>, bool> &&
                       !std::convertible_to<Fn, std::string> &&
                       std::invocable<Fn, const Event&>)
             PropValue(Fn&& fn) : _value(EventHandler(std::forward<Fn>(fn))) {} // Implicit constructor from any callable accepting const Event&
 
             template <typename Fn>
             requires (!std::same_as<std::decay_t<Fn>, PropValue> &&
+                      !std::same_as<std::decay_t<Fn>, bool> &&
                       !std::convertible_to<Fn, std::string> &&
                       !std::invocable<Fn, const Event&> &&
                       std::invocable<Fn>)
             PropValue(Fn&& fn) : _value(EventHandler([f = std::forward<Fn>(fn)](const Event&) { f(); })) {} // Implicit constructor from any zero-argument callable
 
             [[nodiscard]] bool isString() const { return std::holds_alternative<std::string>(_value); } // Check whether this property stores a string value
+            [[nodiscard]] bool isBool() const { return std::holds_alternative<bool>(_value); } // Check whether this property stores a boolean value
             [[nodiscard]] bool isHandler() const { return std::holds_alternative<EventHandler>(_value); } // Check whether this property stores an event handler callback
             [[nodiscard]] const std::string& asString() const { return std::get<std::string>(_value); } // Access the underlying string value
+            [[nodiscard]] bool asBool() const { return std::get<bool>(_value); } // Access the underlying boolean value
             [[nodiscard]] const EventHandler& asHandler() const { return std::get<EventHandler>(_value); } // Access the underlying event handler callback
 
         private:
-            std::variant<std::string, EventHandler> _value; // Internal variant storing either a string attribute or an EventHandler
+            std::variant<std::string, bool, EventHandler> _value; // Internal variant storing a string attribute, boolean property, or an EventHandler
     };
 
     using Props = std::map<std::string, PropValue>; // Key-value map representing HTML attributes and C++ event handlers
@@ -251,6 +256,7 @@ namespace UIEngine {
 
             [[nodiscard]] bool hasProp(const std::string& key) const; // Check whether a specific property key was provided to this component
             [[nodiscard]] std::string getProp(const std::string& key, const std::string& fallback = "") const; // Retrieve a string property value by key, or return fallback if absent
+            [[nodiscard]] bool getBoolProp(const std::string& key, bool fallback = false) const; // Retrieve a boolean property value by key, or return fallback if absent
             [[nodiscard]] EventHandler getCallback(const std::string& key) const; // Retrieve an EventHandler callback prop by key, or an empty function if absent
             void triggerCallback(const std::string& key, const Event& event = {}) const; // Invoke an EventHandler callback prop by key if present
     };
