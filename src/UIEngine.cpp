@@ -872,6 +872,17 @@ namespace UIEngine {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>)HTML" << pageTitle << R"HTML(</title>
     <link rel="stylesheet" href="/styles.css">
+    <style>
+        .keet-pending, [data-loading="true"] {
+            opacity: 0.7 !important;
+            cursor: wait !important;
+            pointer-events: none !important;
+            transition: opacity 0.15s ease-in-out;
+        }
+        form.keet-submitting {
+            cursor: wait !important;
+        }
+    </style>
 </head>
 <body>
     <div id="root"></div>
@@ -933,7 +944,31 @@ namespace UIEngine {
             }
         }
 
-        async function dispatchEvent(handlerId, eventPayload) {
+        async function dispatchEvent(handlerId, eventPayload, triggerEl = null) {
+            let origDisabled = false;
+            let hadDisabledProp = false;
+            let origText = null;
+            let formEl = null;
+
+            if (triggerEl && triggerEl.nodeType === 1) {
+                triggerEl.classList.add("keet-pending");
+                triggerEl.setAttribute("data-loading", "true");
+                if ("disabled" in triggerEl) {
+                    hadDisabledProp = true;
+                    origDisabled = triggerEl.disabled;
+                    triggerEl.disabled = true;
+                }
+                const loadingText = triggerEl.getAttribute("data-loading-text");
+                if (loadingText !== null && loadingText !== "") {
+                    origText = triggerEl.textContent;
+                    triggerEl.textContent = loadingText;
+                }
+                formEl = triggerEl.closest ? triggerEl.closest("form") : null;
+                if (formEl) {
+                    formEl.classList.add("keet-submitting");
+                }
+            }
+
             try {
                 const sid = getSessionId();
                 const res = await fetch("/event", {
@@ -960,6 +995,20 @@ namespace UIEngine {
                 }
             } catch (err) {
                 console.error("Event dispatch failed:", err);
+            } finally {
+                if (triggerEl && triggerEl.nodeType === 1 && document.body.contains(triggerEl)) {
+                    triggerEl.classList.remove("keet-pending");
+                    triggerEl.removeAttribute("data-loading");
+                    if (hadDisabledProp) {
+                        triggerEl.disabled = origDisabled;
+                    }
+                    if (origText !== null) {
+                        triggerEl.textContent = origText;
+                    }
+                }
+                if (formEl && document.body.contains(formEl)) {
+                    formEl.classList.remove("keet-submitting");
+                }
             }
         }
 
@@ -1000,7 +1049,8 @@ namespace UIEngine {
                         for (const [field, val] of formData.entries()) {
                             form[field] = String(val);
                         }
-                        await dispatchEvent(value, { type: "submit", form });
+                        const submitter = e.submitter || el.querySelector("button[type='submit'], input[type='submit']") || el;
+                        await dispatchEvent(value, { type: "submit", form }, submitter);
                         el.reset();
                     };
                 } else if (key === "data-on-click") {
@@ -1024,7 +1074,7 @@ namespace UIEngine {
                             ctrlKey: Boolean(e.ctrlKey),
                             shiftKey: Boolean(e.shiftKey),
                             metaKey: Boolean(e.metaKey)
-                        });
+                        }, el);
                     };
                 } else if (key === "data-on-input") {
                     el.oninput = async (e) => {
@@ -1032,7 +1082,7 @@ namespace UIEngine {
                             type: "input",
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || ""),
                             checked: Boolean(e.target && "checked" in e.target ? e.target.checked : el.checked)
-                        });
+                        }, el);
                     };
                 } else if (key === "data-on-change") {
                     el.onchange = async (e) => {
@@ -1040,7 +1090,7 @@ namespace UIEngine {
                             type: "change",
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || ""),
                             checked: Boolean(e.target && "checked" in e.target ? e.target.checked : el.checked)
-                        });
+                        }, el);
                     };
                 } else if (key === "data-on-keydown") {
                     el.onkeydown = async (e) => {
@@ -1054,7 +1104,7 @@ namespace UIEngine {
                             shiftKey: Boolean(e.shiftKey),
                             metaKey: Boolean(e.metaKey),
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
-                        });
+                        }, el);
                     };
                 } else if (key === "data-on-keyup") {
                     el.onkeyup = async (e) => {
@@ -1068,21 +1118,21 @@ namespace UIEngine {
                             shiftKey: Boolean(e.shiftKey),
                             metaKey: Boolean(e.metaKey),
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
-                        });
+                        }, el);
                     };
                 } else if (key === "data-on-focus") {
                     el.onfocus = async (e) => {
                         await dispatchEvent(value, {
                             type: "focus",
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
-                        });
+                        }, el);
                     };
                 } else if (key === "data-on-blur") {
                     el.onblur = async (e) => {
                         await dispatchEvent(value, {
                             type: "blur",
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
-                        });
+                        }, el);
                     };
                 } else if (!key.startsWith("data-on-")) {
                     const lower = key.toLowerCase();
