@@ -1355,8 +1355,16 @@ namespace UIEngine {
             return VNode::el("header", std::move(props), std::move(children));
         }
 
+        VNode footer(Props props, std::vector<VNode> children) { // Create a <footer> semantic element with props and child VNodes
+            return VNode::el("footer", std::move(props), std::move(children));
+        }
+
         VNode nav(Props props, std::vector<VNode> children) { // Create a <nav> semantic navigation container element with props and child VNodes
             return VNode::el("nav", std::move(props), std::move(children));
+        }
+
+        VNode nav(Props props, std::string text) { // Create a <nav> semantic navigation element containing a single text node
+            return VNode::el("nav", std::move(props), { VNode::textNode(std::move(text)) });
         }
 
         VNode main(Props props, std::vector<VNode> children) { // Create a <main> semantic element with props and child VNodes
@@ -1409,6 +1417,74 @@ namespace UIEngine {
 
         VNode input(Props props) { // Create a self-closing <input> element with the given attributes
             return VNode::el("input", std::move(props), {});
+        }
+
+        VNode img(Props props) { // Create a self-closing <img> element with the given attributes
+            return VNode::el("img", std::move(props), {});
+        }
+
+        VNode select(Props props, std::vector<VNode> children) { // Create a <select> dropdown element with props and child option VNodes
+            return VNode::el("select", std::move(props), std::move(children));
+        }
+
+        VNode option(Props props, std::vector<VNode> children) { // Create an <option> element with props and child VNodes
+            return VNode::el("option", std::move(props), std::move(children));
+        }
+
+        VNode option(Props props, std::string text) { // Create an <option> element containing a single text label
+            return VNode::el("option", std::move(props), { VNode::textNode(std::move(text)) });
+        }
+
+        VNode textarea(Props props, std::vector<VNode> children) { // Create a <textarea> element with props and child VNodes
+            return VNode::el("textarea", std::move(props), std::move(children));
+        }
+
+        VNode textarea(Props props, std::string text) { // Create a <textarea> element containing a single text content
+            return VNode::el("textarea", std::move(props), { VNode::textNode(std::move(text)) });
+        }
+
+        VNode label(Props props, std::vector<VNode> children) { // Create a <label> element with props and child VNodes
+            return VNode::el("label", std::move(props), std::move(children));
+        }
+
+        VNode label(Props props, std::string text) { // Create a <label> element containing a single text label
+            return VNode::el("label", std::move(props), { VNode::textNode(std::move(text)) });
+        }
+
+        VNode table(Props props, std::vector<VNode> children) { // Create a <table> element with props and child VNodes
+            return VNode::el("table", std::move(props), std::move(children));
+        }
+
+        VNode thead(Props props, std::vector<VNode> children) { // Create a <thead> table header element with props and child VNodes
+            return VNode::el("thead", std::move(props), std::move(children));
+        }
+
+        VNode tbody(Props props, std::vector<VNode> children) { // Create a <tbody> table body element with props and child VNodes
+            return VNode::el("tbody", std::move(props), std::move(children));
+        }
+
+        VNode tr(Props props, std::vector<VNode> children) { // Create a <tr> table row element with props and child VNodes
+            return VNode::el("tr", std::move(props), std::move(children));
+        }
+
+        VNode th(Props props, std::vector<VNode> children) { // Create a <th> table header cell with props and child VNodes
+            return VNode::el("th", std::move(props), std::move(children));
+        }
+
+        VNode th(Props props, std::string text) { // Create a <th> table header cell containing a single text label
+            return VNode::el("th", std::move(props), { VNode::textNode(std::move(text)) });
+        }
+
+        VNode td(Props props, std::vector<VNode> children) { // Create a <td> table cell with props and child VNodes
+            return VNode::el("td", std::move(props), std::move(children));
+        }
+
+        VNode td(Props props, std::string text) { // Create a <td> table cell containing a single text label
+            return VNode::el("td", std::move(props), { VNode::textNode(std::move(text)) });
+        }
+
+        VNode dialog(Props props, std::vector<VNode> children) { // Create a <dialog> modal element with props and child VNodes
+            return VNode::el("dialog", std::move(props), std::move(children));
         }
     }
 }

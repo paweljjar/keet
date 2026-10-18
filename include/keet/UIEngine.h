@@ -354,7 +354,9 @@ namespace UIEngine {
         VNode span(Props props = {}, std::vector<VNode> children = {}); // Create a <span> inline container element with props and child VNodes
         VNode span(Props props, const std::string &text); // Create a <span> inline element containing a single text node
         VNode header(Props props = {}, std::vector<VNode> children = {}); // Create a <header> semantic element with props and child VNodes
+        VNode footer(Props props = {}, std::vector<VNode> children = {}); // Create a <footer> semantic element with props and child VNodes
         VNode nav(Props props = {}, std::vector<VNode> children = {}); // Create a <nav> semantic navigation container element with props and child VNodes
+        VNode nav(Props props, std::string text); // Create a <nav> semantic navigation element containing a single text node
         VNode main(Props props = {}, std::vector<VNode> children = {}); // Create a <main> semantic element with props and child VNodes
         VNode section(Props props = {}, std::vector<VNode> children = {}); // Create a <section> semantic element with props and child VNodes
         VNode ul(Props props = {}, std::vector<VNode> children = {}); // Create an unordered list <ul> element with props and child VNodes
@@ -369,6 +371,26 @@ namespace UIEngine {
         VNode p(Props props, std::string text); // Create a <p> paragraph element containing a single text node
         VNode button(Props props, std::string text); // Create a <button> element containing a single text label
         VNode input(Props props = {}); // Create a self-closing <input> element with the given attributes
+        VNode img(Props props = {}); // Create a self-closing <img> element with the given attributes
+
+        VNode select(Props props = {}, std::vector<VNode> children = {}); // Create a <select> dropdown element with props and child option VNodes
+        VNode option(Props props = {}, std::vector<VNode> children = {}); // Create an <option> element with props and child VNodes
+        VNode option(Props props, std::string text); // Create an <option> element containing a single text label
+        VNode textarea(Props props = {}, std::vector<VNode> children = {}); // Create a <textarea> element with props and child VNodes
+        VNode textarea(Props props, std::string text); // Create a <textarea> element containing a single text content
+        VNode label(Props props = {}, std::vector<VNode> children = {}); // Create a <label> element with props and child VNodes
+        VNode label(Props props, std::string text); // Create a <label> element containing a single text label
+
+        VNode table(Props props = {}, std::vector<VNode> children = {}); // Create a <table> element with props and child VNodes
+        VNode thead(Props props = {}, std::vector<VNode> children = {}); // Create a <thead> table header element with props and child VNodes
+        VNode tbody(Props props = {}, std::vector<VNode> children = {}); // Create a <tbody> table body element with props and child VNodes
+        VNode tr(Props props = {}, std::vector<VNode> children = {}); // Create a <tr> table row element with props and child VNodes
+        VNode th(Props props = {}, std::vector<VNode> children = {}); // Create a <th> table header cell with props and child VNodes
+        VNode th(Props props, std::string text); // Create a <th> table header cell containing a single text label
+        VNode td(Props props = {}, std::vector<VNode> children = {}); // Create a <td> table cell with props and child VNodes
+        VNode td(Props props, std::string text); // Create a <td> table cell containing a single text label
+
+        VNode dialog(Props props = {}, std::vector<VNode> children = {}); // Create a <dialog> modal element with props and child VNodes
     }
 }
 
