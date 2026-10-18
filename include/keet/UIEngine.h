@@ -22,40 +22,59 @@
 
 namespace UIEngine {
     struct Event { // Represents a DOM event dispatched from the browser runtime to a C++ event handler
-        std::string type; // Event type name (e.g., "click", "submit", "input", "change")
-        std::string value; // Target input element value for "input" and "change" events
+        std::string type; // Event type name (e.g., "click", "submit", "input", "change", "keydown", "keyup", "focus", "blur")
+        std::string value; // Target input element value for input, change, keydown, focus, blur, etc.
         std::map<std::string, std::string> form; // Key-value map of submitted form fields for "submit" events
+
+        std::string key; // Key pressed for keyboard events (e.g., "Enter", "Escape", "a")
+        int keyCode = 0; // Legacy numeric key code (e.g., 13, 27)
+        std::string code; // Physical key code (e.g., "KeyA", "Enter")
+
+        bool checked = false; // Checked status for checkbox and radio inputs
+
+        double clientX = 0.0; // Horizontal client coordinate in pixels for mouse events
+        double clientY = 0.0; // Vertical client coordinate in pixels for mouse events
+
+        bool altKey = false; // True if Alt key was active during the event
+        bool ctrlKey = false; // True if Control key was active during the event
+        bool shiftKey = false; // True if Shift key was active during the event
+        bool metaKey = false; // True if Meta key was active during the event
     };
 
     using EventHandler = std::function<void(const Event&)>; // Callback signature for handling browser DOM events in C++
 
-    class PropValue { // Variant wrapper holding either a string HTML attribute or a C++ event handler callback
+    class PropValue { // Variant wrapper holding either a string HTML attribute, boolean property, or a C++ event handler callback
         public:
             PropValue() : _value(std::string{}) {} // Default constructor initializing an empty string property
             PropValue(const char* s) : _value(std::string(s ? s : "")) {} // Implicit constructor from C-string literal
             PropValue(std::string s) : _value(std::move(s)) {} // Implicit constructor from std::string
+            PropValue(bool b) : _value(b) {} // Implicit constructor from boolean
             PropValue(EventHandler handler) : _value(std::move(handler)) {} // Implicit constructor from an EventHandler function
 
             template <typename Fn>
             requires (!std::same_as<std::decay_t<Fn>, PropValue> &&
+                      !std::same_as<std::decay_t<Fn>, bool> &&
                       !std::convertible_to<Fn, std::string> &&
                       std::invocable<Fn, const Event&>)
             PropValue(Fn&& fn) : _value(EventHandler(std::forward<Fn>(fn))) {} // Implicit constructor from any callable accepting const Event&
 
             template <typename Fn>
             requires (!std::same_as<std::decay_t<Fn>, PropValue> &&
+                      !std::same_as<std::decay_t<Fn>, bool> &&
                       !std::convertible_to<Fn, std::string> &&
                       !std::invocable<Fn, const Event&> &&
                       std::invocable<Fn>)
             PropValue(Fn&& fn) : _value(EventHandler([f = std::forward<Fn>(fn)](const Event&) { f(); })) {} // Implicit constructor from any zero-argument callable
 
             [[nodiscard]] bool isString() const { return std::holds_alternative<std::string>(_value); } // Check whether this property stores a string value
+            [[nodiscard]] bool isBool() const { return std::holds_alternative<bool>(_value); } // Check whether this property stores a boolean value
             [[nodiscard]] bool isHandler() const { return std::holds_alternative<EventHandler>(_value); } // Check whether this property stores an event handler callback
             [[nodiscard]] const std::string& asString() const { return std::get<std::string>(_value); } // Access the underlying string value
+            [[nodiscard]] bool asBool() const { return std::get<bool>(_value); } // Access the underlying boolean value
             [[nodiscard]] const EventHandler& asHandler() const { return std::get<EventHandler>(_value); } // Access the underlying event handler callback
 
         private:
-            std::variant<std::string, EventHandler> _value; // Internal variant storing either a string attribute or an EventHandler
+            std::variant<std::string, bool, EventHandler> _value; // Internal variant storing a string attribute, boolean property, or an EventHandler
     };
 
     using Props = std::map<std::string, PropValue>; // Key-value map representing HTML attributes and C++ event handlers
@@ -251,6 +270,7 @@ namespace UIEngine {
 
             [[nodiscard]] bool hasProp(const std::string& key) const; // Check whether a specific property key was provided to this component
             [[nodiscard]] std::string getProp(const std::string& key, const std::string& fallback = "") const; // Retrieve a string property value by key, or return fallback if absent
+            [[nodiscard]] bool getBoolProp(const std::string& key, bool fallback = false) const; // Retrieve a boolean property value by key, or return fallback if absent
             [[nodiscard]] EventHandler getCallback(const std::string& key) const; // Retrieve an EventHandler callback prop by key, or an empty function if absent
             void triggerCallback(const std::string& key, const Event& event = {}) const; // Invoke an EventHandler callback prop by key if present
     };
@@ -334,7 +354,9 @@ namespace UIEngine {
         VNode span(Props props = {}, std::vector<VNode> children = {}); // Create a <span> inline container element with props and child VNodes
         VNode span(Props props, const std::string &text); // Create a <span> inline element containing a single text node
         VNode header(Props props = {}, std::vector<VNode> children = {}); // Create a <header> semantic element with props and child VNodes
+        VNode footer(Props props = {}, std::vector<VNode> children = {}); // Create a <footer> semantic element with props and child VNodes
         VNode nav(Props props = {}, std::vector<VNode> children = {}); // Create a <nav> semantic navigation container element with props and child VNodes
+        VNode nav(Props props, std::string text); // Create a <nav> semantic navigation element containing a single text node
         VNode main(Props props = {}, std::vector<VNode> children = {}); // Create a <main> semantic element with props and child VNodes
         VNode section(Props props = {}, std::vector<VNode> children = {}); // Create a <section> semantic element with props and child VNodes
         VNode ul(Props props = {}, std::vector<VNode> children = {}); // Create an unordered list <ul> element with props and child VNodes
@@ -349,6 +371,26 @@ namespace UIEngine {
         VNode p(Props props, std::string text); // Create a <p> paragraph element containing a single text node
         VNode button(Props props, std::string text); // Create a <button> element containing a single text label
         VNode input(Props props = {}); // Create a self-closing <input> element with the given attributes
+        VNode img(Props props = {}); // Create a self-closing <img> element with the given attributes
+
+        VNode select(Props props = {}, std::vector<VNode> children = {}); // Create a <select> dropdown element with props and child option VNodes
+        VNode option(Props props = {}, std::vector<VNode> children = {}); // Create an <option> element with props and child VNodes
+        VNode option(Props props, std::string text); // Create an <option> element containing a single text label
+        VNode textarea(Props props = {}, std::vector<VNode> children = {}); // Create a <textarea> element with props and child VNodes
+        VNode textarea(Props props, std::string text); // Create a <textarea> element containing a single text content
+        VNode label(Props props = {}, std::vector<VNode> children = {}); // Create a <label> element with props and child VNodes
+        VNode label(Props props, std::string text); // Create a <label> element containing a single text label
+
+        VNode table(Props props = {}, std::vector<VNode> children = {}); // Create a <table> element with props and child VNodes
+        VNode thead(Props props = {}, std::vector<VNode> children = {}); // Create a <thead> table header element with props and child VNodes
+        VNode tbody(Props props = {}, std::vector<VNode> children = {}); // Create a <tbody> table body element with props and child VNodes
+        VNode tr(Props props = {}, std::vector<VNode> children = {}); // Create a <tr> table row element with props and child VNodes
+        VNode th(Props props = {}, std::vector<VNode> children = {}); // Create a <th> table header cell with props and child VNodes
+        VNode th(Props props, std::string text); // Create a <th> table header cell containing a single text label
+        VNode td(Props props = {}, std::vector<VNode> children = {}); // Create a <td> table cell with props and child VNodes
+        VNode td(Props props, std::string text); // Create a <td> table cell containing a single text label
+
+        VNode dialog(Props props = {}, std::vector<VNode> children = {}); // Create a <dialog> modal element with props and child VNodes
     }
 }
 

@@ -88,6 +88,18 @@ namespace UIEngine {
             if (propName == "onChange" || propName == "onchange" || propName == "data-on-change") {
                 return "data-on-change";
             }
+            if (propName == "onKeyDown" || propName == "onkeydown" || propName == "data-on-keydown") {
+                return "data-on-keydown";
+            }
+            if (propName == "onKeyUp" || propName == "onkeyup" || propName == "data-on-keyup") {
+                return "data-on-keyup";
+            }
+            if (propName == "onFocus" || propName == "onfocus" || propName == "data-on-focus") {
+                return "data-on-focus";
+            }
+            if (propName == "onBlur" || propName == "onblur" || propName == "data-on-blur") {
+                return "data-on-blur";
+            }
             return propName;
         }
 
@@ -628,6 +640,8 @@ namespace UIEngine {
             }
             if (val.isString()) {
                 propsObj[propKey] = val.asString(); // Insert the attribute name and string value into the JSON object
+            } else if (val.isBool()) {
+                propsObj[propKey] = val.asBool(); // Insert the attribute name and boolean value into the JSON object
             } else if (val.isHandler()) {
                 propsObj[normalizeEventAttr(propKey)] = registerEventHandler(val.asHandler()); // Register C++ callback and emit its handler ID
             }
@@ -654,10 +668,28 @@ namespace UIEngine {
 
     std::string Component::getProp(const std::string& key, const std::string& fallback) const { // Retrieve a string property value by key, or return fallback if absent
         const auto it = _props.find(key); // Look up the key in the component's _props map
-        if (it != _props.end() && it->second.isString()) {
-            return it->second.asString(); // Return the found string property value
+        if (it != _props.end()) {
+            if (it->second.isString()) {
+                return it->second.asString(); // Return the found string property value
+            }
+            if (it->second.isBool()) {
+                return it->second.asBool() ? "true" : "false"; // String representation of boolean property
+            }
         }
-        return fallback; // Return the fallback string if missing or not a string prop
+        return fallback; // Return the fallback string if missing or not a string/bool prop
+    }
+
+    bool Component::getBoolProp(const std::string& key, bool fallback) const { // Retrieve a boolean property value by key, or return fallback if absent
+        const auto it = _props.find(key); // Look up the key in the component's _props map
+        if (it != _props.end()) {
+            if (it->second.isBool()) {
+                return it->second.asBool();
+            }
+            if (it->second.isString()) {
+                return it->second.asString() == "true" || it->second.asString() == "1";
+            }
+        }
+        return fallback; // Return the fallback boolean if missing or not matching
     }
 
     EventHandler Component::getCallback(const std::string& key) const { // Retrieve an EventHandler callback prop by key, or an empty function if absent
@@ -744,7 +776,11 @@ namespace UIEngine {
     VNode Link(const std::string& to, const std::string& text, Props props) { // Create a client-side navigation <a> element that switches routes without reloading the page
         const std::string targetPath = normalizeRoutePath(to);
         const std::string activePath = currentPath();
-        const bool isActive = (activePath == targetPath) || (activePath == "/" && props.contains("defaultActive") && props.at("defaultActive").isString() && props.at("defaultActive").asString() == "true");
+        const bool defaultActive = props.contains("defaultActive") && (
+            (props.at("defaultActive").isBool() && props.at("defaultActive").asBool()) ||
+            (props.at("defaultActive").isString() && props.at("defaultActive").asString() == "true")
+        );
+        const bool isActive = (activePath == targetPath) || (activePath == "/" && defaultActive);
         props.erase("defaultActive");
 
         std::string className = "nav-link";
@@ -873,14 +909,31 @@ namespace UIEngine {
             }
         }
 
+        const BOOLEAN_PROPS = new Set([
+            "disabled", "checked", "readonly", "required",
+            "selected", "autofocus", "multiple", "hidden", "open", "novalidate", "reversed"
+        ]);
+
         function applyProps(el, oldProps = {}, newProps = {}) {
             for (const key of Object.keys(oldProps)) {
                 if (!(key in newProps)) {
+                    const lower = key.toLowerCase();
                     if (key === "data-on-click") el.onclick = null;
                     else if (key === "data-on-submit") el.onsubmit = null;
                     else if (key === "data-on-input") el.oninput = null;
                     else if (key === "data-on-change") el.onchange = null;
-                    else el.removeAttribute(key);
+                    else if (key === "data-on-keydown") el.onkeydown = null;
+                    else if (key === "data-on-keyup") el.onkeyup = null;
+                    else if (key === "data-on-focus") el.onfocus = null;
+                    else if (key === "data-on-blur") el.onblur = null;
+                    else if (BOOLEAN_PROPS.has(lower) || (lower in el && typeof el[lower] === "boolean")) {
+                        const domProp = (lower === "readonly") ? "readOnly" : lower;
+                        if (domProp in el) el[domProp] = false;
+                        el.removeAttribute(key);
+                        if (lower !== key) el.removeAttribute(lower);
+                    } else {
+                        el.removeAttribute(key);
+                    }
                 }
             }
             for (const [key, value] of Object.entries(newProps)) {
@@ -909,21 +962,94 @@ namespace UIEngine {
                                 window.history.pushState({}, "", href);
                             }
                         }
-                        await dispatchEvent(value, { type: "click" });
+                        await dispatchEvent(value, {
+                            type: "click",
+                            clientX: Number(e.clientX || 0),
+                            clientY: Number(e.clientY || 0),
+                            altKey: Boolean(e.altKey),
+                            ctrlKey: Boolean(e.ctrlKey),
+                            shiftKey: Boolean(e.shiftKey),
+                            metaKey: Boolean(e.metaKey)
+                        });
                     };
                 } else if (key === "data-on-input") {
                     el.oninput = async (e) => {
-                        await dispatchEvent(value, { type: "input", value: e.target.value || "" });
+                        await dispatchEvent(value, {
+                            type: "input",
+                            value: (e.target && "value" in e.target) ? e.target.value : (el.value || ""),
+                            checked: Boolean(e.target && "checked" in e.target ? e.target.checked : el.checked)
+                        });
                     };
                 } else if (key === "data-on-change") {
                     el.onchange = async (e) => {
-                        await dispatchEvent(value, { type: "change", value: e.target.value || "" });
+                        await dispatchEvent(value, {
+                            type: "change",
+                            value: (e.target && "value" in e.target) ? e.target.value : (el.value || ""),
+                            checked: Boolean(e.target && "checked" in e.target ? e.target.checked : el.checked)
+                        });
+                    };
+                } else if (key === "data-on-keydown") {
+                    el.onkeydown = async (e) => {
+                        await dispatchEvent(value, {
+                            type: "keydown",
+                            key: String(e.key || ""),
+                            keyCode: Number(e.keyCode || 0),
+                            code: String(e.code || ""),
+                            altKey: Boolean(e.altKey),
+                            ctrlKey: Boolean(e.ctrlKey),
+                            shiftKey: Boolean(e.shiftKey),
+                            metaKey: Boolean(e.metaKey),
+                            value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
+                        });
+                    };
+                } else if (key === "data-on-keyup") {
+                    el.onkeyup = async (e) => {
+                        await dispatchEvent(value, {
+                            type: "keyup",
+                            key: String(e.key || ""),
+                            keyCode: Number(e.keyCode || 0),
+                            code: String(e.code || ""),
+                            altKey: Boolean(e.altKey),
+                            ctrlKey: Boolean(e.ctrlKey),
+                            shiftKey: Boolean(e.shiftKey),
+                            metaKey: Boolean(e.metaKey),
+                            value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
+                        });
+                    };
+                } else if (key === "data-on-focus") {
+                    el.onfocus = async (e) => {
+                        await dispatchEvent(value, {
+                            type: "focus",
+                            value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
+                        });
+                    };
+                } else if (key === "data-on-blur") {
+                    el.onblur = async (e) => {
+                        await dispatchEvent(value, {
+                            type: "blur",
+                            value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
+                        });
                     };
                 } else if (!key.startsWith("data-on-")) {
-                    if (key === "value" && "value" in el) {
-                        el.value = value;
+                    const lower = key.toLowerCase();
+                    const isBoolProp = BOOLEAN_PROPS.has(lower) || typeof value === "boolean";
+                    if (isBoolProp) {
+                        const domProp = (lower === "readonly") ? "readOnly" : lower;
+                        const isTruthy = value === true || value === "true" || value === "";
+                        if (isTruthy) {
+                            if (domProp in el) el[domProp] = true;
+                            el.setAttribute(key, "");
+                        } else {
+                            if (domProp in el) el[domProp] = false;
+                            el.removeAttribute(key);
+                            if (lower !== key) el.removeAttribute(lower);
+                        }
+                    } else {
+                        if (key === "value" && "value" in el) {
+                            el.value = value;
+                        }
+                        el.setAttribute(key, value);
                     }
-                    el.setAttribute(key, value);
                 }
             }
         }
@@ -1160,6 +1286,36 @@ namespace UIEngine {
                     }
                 }
             }
+            if (obj.contains("key") && obj.at("key").isString()) {
+                event.key = obj.at("key").asString();
+            }
+            if (obj.contains("keyCode") && obj.at("keyCode").isNumber()) {
+                event.keyCode = static_cast<int>(obj.at("keyCode").asNumber());
+            }
+            if (obj.contains("code") && obj.at("code").isString()) {
+                event.code = obj.at("code").asString();
+            }
+            if (obj.contains("checked") && obj.at("checked").isBool()) {
+                event.checked = obj.at("checked").asBool();
+            }
+            if (obj.contains("clientX") && obj.at("clientX").isNumber()) {
+                event.clientX = obj.at("clientX").asNumber();
+            }
+            if (obj.contains("clientY") && obj.at("clientY").isNumber()) {
+                event.clientY = obj.at("clientY").asNumber();
+            }
+            if (obj.contains("altKey") && obj.at("altKey").isBool()) {
+                event.altKey = obj.at("altKey").asBool();
+            }
+            if (obj.contains("ctrlKey") && obj.at("ctrlKey").isBool()) {
+                event.ctrlKey = obj.at("ctrlKey").asBool();
+            }
+            if (obj.contains("shiftKey") && obj.at("shiftKey").isBool()) {
+                event.shiftKey = obj.at("shiftKey").asBool();
+            }
+            if (obj.contains("metaKey") && obj.at("metaKey").isBool()) {
+                event.metaKey = obj.at("metaKey").asBool();
+            }
 
             EventHandler targetHandler;
             {
@@ -1199,8 +1355,16 @@ namespace UIEngine {
             return VNode::el("header", std::move(props), std::move(children));
         }
 
+        VNode footer(Props props, std::vector<VNode> children) { // Create a <footer> semantic element with props and child VNodes
+            return VNode::el("footer", std::move(props), std::move(children));
+        }
+
         VNode nav(Props props, std::vector<VNode> children) { // Create a <nav> semantic navigation container element with props and child VNodes
             return VNode::el("nav", std::move(props), std::move(children));
+        }
+
+        VNode nav(Props props, std::string text) { // Create a <nav> semantic navigation element containing a single text node
+            return VNode::el("nav", std::move(props), { VNode::textNode(std::move(text)) });
         }
 
         VNode main(Props props, std::vector<VNode> children) { // Create a <main> semantic element with props and child VNodes
@@ -1253,6 +1417,74 @@ namespace UIEngine {
 
         VNode input(Props props) { // Create a self-closing <input> element with the given attributes
             return VNode::el("input", std::move(props), {});
+        }
+
+        VNode img(Props props) { // Create a self-closing <img> element with the given attributes
+            return VNode::el("img", std::move(props), {});
+        }
+
+        VNode select(Props props, std::vector<VNode> children) { // Create a <select> dropdown element with props and child option VNodes
+            return VNode::el("select", std::move(props), std::move(children));
+        }
+
+        VNode option(Props props, std::vector<VNode> children) { // Create an <option> element with props and child VNodes
+            return VNode::el("option", std::move(props), std::move(children));
+        }
+
+        VNode option(Props props, std::string text) { // Create an <option> element containing a single text label
+            return VNode::el("option", std::move(props), { VNode::textNode(std::move(text)) });
+        }
+
+        VNode textarea(Props props, std::vector<VNode> children) { // Create a <textarea> element with props and child VNodes
+            return VNode::el("textarea", std::move(props), std::move(children));
+        }
+
+        VNode textarea(Props props, std::string text) { // Create a <textarea> element containing a single text content
+            return VNode::el("textarea", std::move(props), { VNode::textNode(std::move(text)) });
+        }
+
+        VNode label(Props props, std::vector<VNode> children) { // Create a <label> element with props and child VNodes
+            return VNode::el("label", std::move(props), std::move(children));
+        }
+
+        VNode label(Props props, std::string text) { // Create a <label> element containing a single text label
+            return VNode::el("label", std::move(props), { VNode::textNode(std::move(text)) });
+        }
+
+        VNode table(Props props, std::vector<VNode> children) { // Create a <table> element with props and child VNodes
+            return VNode::el("table", std::move(props), std::move(children));
+        }
+
+        VNode thead(Props props, std::vector<VNode> children) { // Create a <thead> table header element with props and child VNodes
+            return VNode::el("thead", std::move(props), std::move(children));
+        }
+
+        VNode tbody(Props props, std::vector<VNode> children) { // Create a <tbody> table body element with props and child VNodes
+            return VNode::el("tbody", std::move(props), std::move(children));
+        }
+
+        VNode tr(Props props, std::vector<VNode> children) { // Create a <tr> table row element with props and child VNodes
+            return VNode::el("tr", std::move(props), std::move(children));
+        }
+
+        VNode th(Props props, std::vector<VNode> children) { // Create a <th> table header cell with props and child VNodes
+            return VNode::el("th", std::move(props), std::move(children));
+        }
+
+        VNode th(Props props, std::string text) { // Create a <th> table header cell containing a single text label
+            return VNode::el("th", std::move(props), { VNode::textNode(std::move(text)) });
+        }
+
+        VNode td(Props props, std::vector<VNode> children) { // Create a <td> table cell with props and child VNodes
+            return VNode::el("td", std::move(props), std::move(children));
+        }
+
+        VNode td(Props props, std::string text) { // Create a <td> table cell containing a single text label
+            return VNode::el("td", std::move(props), { VNode::textNode(std::move(text)) });
+        }
+
+        VNode dialog(Props props, std::vector<VNode> children) { // Create a <dialog> modal element with props and child VNodes
+            return VNode::el("dialog", std::move(props), std::move(children));
         }
     }
 }
