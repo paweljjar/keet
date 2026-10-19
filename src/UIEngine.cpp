@@ -1650,6 +1650,33 @@ namespace UIEngine {
             }
         }
 
+        async function switchLocale(newLocale) {
+            try {
+                const sid = getSessionId();
+                const res = await fetch("/locale", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Session-Id": sid
+                    },
+                    body: JSON.stringify({ locale: newLocale })
+                });
+                syncSessionId(res);
+                if (res.ok) {
+                    const nextVNode = await res.json();
+                    renderTree(nextVNode);
+                }
+            } catch (err) {
+                console.error("Locale switch failed:", err);
+            }
+        }
+
+        window.keet = {
+            navigateTo,
+            switchLocale,
+            getSessionId
+        };
+
         window.addEventListener("popstate", () => {
             navigateTo(window.location.pathname || "/", false);
         });
@@ -1688,12 +1715,21 @@ namespace UIEngine {
             const std::string sessionId = HTTPServer::extractOrCreateSessionId(req);
             const auto session = SessionManager::instance().getOrCreateSession(sessionId);
             SessionContext sessionCtx(session);
+
+            std::string activeLoc;
             {
                 std::lock_guard lock(session->mutex);
                 session->currentPath = normalizeRoutePath(req.path);
+                if (session->locale.empty() || session->locale == "en") {
+                    const std::string cookieLoc = req.getCookie("lorikeet_locale");
+                    const std::string acceptLang = req.getHeader("accept-language");
+                    session->locale = Localization::negotiateLocale(acceptLang, cookieLoc, session->locale);
+                }
+                activeLoc = session->locale;
             }
             res.setHeader("X-Session-Id", sessionId);
             res.setHeader("X-Route-Path", currentPath());
+            res.setHeader("X-Locale", activeLoc);
             res.setHeader("Set-Cookie", "lorikeet_session=" + sessionId + "; Path=/; SameSite=Lax");
             HTTPServer::Server::sendHtml(res, HTTP_OK, htmlShell);
         };
@@ -1712,17 +1748,25 @@ namespace UIEngine {
             const std::string sessionId = HTTPServer::extractOrCreateSessionId(req);
             const auto session = SessionManager::instance().getOrCreateSession(sessionId);
             SessionContext sessionCtx(session);
+
+            std::string activeLoc;
             {
                 std::lock_guard lock(session->mutex);
                 if (req.hasQuery("path")) {
                     session->currentPath = normalizeRoutePath(req.getQuery("path"));
                 }
+                const std::string cookieLoc = req.getCookie("lorikeet_locale");
+                const std::string acceptLang = req.getHeader("accept-language");
+                session->locale = Localization::negotiateLocale(acceptLang, cookieLoc, session->locale);
+                activeLoc = session->locale;
+
                 Detail::unmountAllComponents(*session);
                 session->stateStore.clear();
             }
             const HTTPServer::Json vdomJson = renderRootVNode(rootFactory);
             res.setHeader("X-Session-Id", sessionId);
             res.setHeader("X-Route-Path", currentPath());
+            res.setHeader("X-Locale", activeLoc);
             HTTPServer::Server::sendJson(res, HTTP_OK, vdomJson);
         });
 
@@ -1739,6 +1783,33 @@ namespace UIEngine {
             const HTTPServer::Json vdomJson = renderRootVNode(rootFactory);
             res.setHeader("X-Session-Id", sessionId);
             res.setHeader("X-Route-Path", currentPath());
+            res.setHeader("X-Locale", currentLocale());
+            HTTPServer::Server::sendJson(res, HTTP_OK, vdomJson);
+        });
+
+        frontend.post("/locale", [rootFactory](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Switch the active session locale, update cookie, and return the re-rendered VNode tree
+            const std::string sessionId = HTTPServer::extractOrCreateSessionId(req);
+            const auto session = SessionManager::instance().getOrCreateSession(sessionId);
+            SessionContext sessionCtx(session);
+
+            std::string newLocale;
+            const HTTPServer::Json payload = HTTPServer::Json::parse(req.body);
+            if (payload.isObject() && payload.asObject().contains("locale") && payload.asObject().at("locale").isString()) {
+                newLocale = payload.asObject().at("locale").asString();
+            } else if (req.hasQuery("locale")) {
+                newLocale = req.getQuery("locale");
+            }
+
+            if (!newLocale.empty()) {
+                setLocale(newLocale);
+            }
+
+            const std::string active = currentLocale();
+            const HTTPServer::Json vdomJson = renderRootVNode(rootFactory);
+            res.setHeader("X-Session-Id", sessionId);
+            res.setHeader("X-Route-Path", currentPath());
+            res.setHeader("X-Locale", active);
+            res.setHeader("Set-Cookie", "lorikeet_locale=" + active + "; Path=/; SameSite=Lax");
             HTTPServer::Server::sendJson(res, HTTP_OK, vdomJson);
         });
 
@@ -1824,7 +1895,10 @@ namespace UIEngine {
                     return;
                 }
                 const HTTPServer::Json vdomJson = renderRootVNode(factory);
+                const std::string active = currentLocale();
                 res.setHeader("X-Route-Path", currentPath());
+                res.setHeader("X-Locale", active);
+                res.setHeader("Set-Cookie", "lorikeet_locale=" + active + "; Path=/; SameSite=Lax");
                 HTTPServer::Server::sendJson(res, HTTP_OK, vdomJson);
             } else {
                 res.setHeader("X-Route-Path", currentPath());

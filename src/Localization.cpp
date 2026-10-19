@@ -33,6 +33,107 @@ namespace UIEngine {
         return out;
     }
 
+    std::string Localization::negotiateLocale(const std::string& acceptLanguageHeader, const std::string& cookieLocale, const std::string& defaultLocale) {
+        auto& locInst = instance();
+
+        // 1. Explicit cookie override
+        if (!cookieLocale.empty()) {
+            const std::string normCookie = normalizeLocale(cookieLocale);
+            if (locInst.hasLocale(normCookie)) {
+                return normCookie;
+            }
+            // Check base language of cookie
+            const size_t dash = normCookie.find('-');
+            if (dash != std::string::npos) {
+                const std::string base = normCookie.substr(0, dash);
+                if (locInst.hasLocale(base)) {
+                    return base;
+                }
+            }
+        }
+
+        // 2. Accept-Language header parsing with quality values (q)
+        if (!acceptLanguageHeader.empty()) {
+            struct LangQuality {
+                std::string tag;
+                double quality;
+                size_t originalOrder;
+            };
+            std::vector<LangQuality> candidates;
+
+            size_t start = 0;
+            size_t order = 0;
+            while (start < acceptLanguageHeader.size()) {
+                size_t end = acceptLanguageHeader.find(',', start);
+                if (end == std::string::npos) {
+                    end = acceptLanguageHeader.size();
+                }
+                std::string token = acceptLanguageHeader.substr(start, end - start);
+                start = end + 1;
+
+                // Trim whitespace
+                size_t f = token.find_first_not_of(" \t");
+                size_t l = token.find_last_not_of(" \t");
+                if (f == std::string::npos || l == std::string::npos) {
+                    continue;
+                }
+                token = token.substr(f, l - f + 1);
+
+                std::string tag;
+                double q = 1.0;
+
+                const size_t semi = token.find(';');
+                if (semi == std::string::npos) {
+                    tag = normalizeLocale(token);
+                } else {
+                    tag = normalizeLocale(token.substr(0, semi));
+                    const std::string param = token.substr(semi + 1);
+                    const size_t qPos = param.find("q=");
+                    if (qPos != std::string::npos) {
+                        try {
+                            q = std::stod(param.substr(qPos + 2));
+                        } catch (...) {
+                            q = 0.0;
+                        }
+                    }
+                }
+
+                if (!tag.empty() && tag != "*" && q > 0.0) {
+                    candidates.push_back({ tag, q, order++ });
+                }
+            }
+
+            // Sort descending by quality, then ascending by original order
+            std::stable_sort(candidates.begin(), candidates.end(), [](const LangQuality& a, const LangQuality& b) {
+                return a.quality > b.quality;
+            });
+
+            // Match against available catalogs
+            for (const auto& item : candidates) {
+                if (locInst.hasLocale(item.tag)) {
+                    return item.tag;
+                }
+                // Try base language
+                const size_t dash = item.tag.find('-');
+                if (dash != std::string::npos) {
+                    const std::string base = item.tag.substr(0, dash);
+                    if (locInst.hasLocale(base)) {
+                        return base;
+                    }
+                }
+            }
+        }
+
+        // 3. Configured default or fallback
+        if (!defaultLocale.empty()) {
+            const std::string normDef = normalizeLocale(defaultLocale);
+            if (locInst.hasLocale(normDef)) {
+                return normDef;
+            }
+        }
+        return locInst.getDefaultLocale();
+    }
+
     bool Localization::loadJson(const std::string& locale, const std::string& jsonStr) {
         try {
             const HTTPServer::Json parsed = HTTPServer::Json::parse(jsonStr);

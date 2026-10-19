@@ -55,6 +55,8 @@ namespace UIEngine {
             // Utility helpers
             static std::string interpolate(std::string text, const TranslationParams& params); // Replace {param} and {{param}} placeholders in string
             static std::string resolvePluralCategory(const std::string& language, long long count); // Compute plural category (zero, one, few, many, other) for language and count
+            static std::string normalizeLocale(std::string locale); // Normalize locale string to lowercase with hyphens
+            static std::string negotiateLocale(const std::string& acceptLanguageHeader, const std::string& cookieLocale = "", const std::string& defaultLocale = ""); // Negotiate best matching locale from cookie, Accept-Language, and available catalogs
 
         private:
             Localization();
@@ -69,7 +71,6 @@ namespace UIEngine {
             std::map<std::string, HTTPServer::Json> _catalogs; // Map of normalized locale codes to parsed JSON catalogs
 
             const HTTPServer::Json* findKeyInCatalog(const HTTPServer::Json& catalog, const std::string& key) const; // Traverse JSON catalog supporting dotted paths and flat keys
-            static std::string normalizeLocale(std::string locale); // Normalize locale string to lowercase with hyphens
     };
 
     // Ergonomic translation helpers within namespace UIEngine
