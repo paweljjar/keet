@@ -18,3 +18,16 @@ target_include_directories(keet PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
+
+# Define the standalone keety AOT compiler executable
+add_executable(keety
+        tools/keety/main.cpp
+        tools/keety/Lexer.cpp
+        tools/keety/Parser.cpp
+        tools/keety/Codegen.cpp
+)
+target_include_directories(keety PRIVATE tools/keety)
+
+# Include KeetScript Ahead-of-Time compiler CMake helper
+include(cmake/KeetCompiler.cmake)
+

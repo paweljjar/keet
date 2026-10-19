@@ -1,0 +1,30 @@
+{
+  "name": "keetscript-syntax",
+  "displayName": "KeetScript Language Support",
+  "description": "Syntax highlighting and language support for KeetScript (.keet) Single-File Components",
+  "version": "1.0.0",
+  "publisher": "keet",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "keet",
+        "aliases": ["KeetScript", "keet"],
+        "extensions": [".keet"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "keet",
+        "scopeName": "source.keet",
+        "path": "./syntaxes/keet.tmLanguage.json"
+      }
+    ]
+  }
+}

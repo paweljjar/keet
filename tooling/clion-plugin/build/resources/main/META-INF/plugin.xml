@@ -1,0 +1,21 @@
+<!--
+  Plugin configuration for KeetScript (.keet) support in CLion / IntelliJ IDEA
+-->
+<idea-plugin>
+  <idea-version since-build="241" />
+  <version>1.0.0</version>
+  <id>com.keet.intellij</id>
+  <name>KeetScript Support</name>
+  <vendor email="support@keet.dev" url="https://github.com/paweljjar/keet">Keet Framework</vendor>
+  <description><![CDATA[Language support, syntax highlighting, autocompletion, and live diagnostics for KeetScript (.keet) Single-File Components in CLion and IntelliJ Platform IDEs.]]></description>
+  <depends>com.intellij.modules.platform</depends>
+  <depends>com.intellij.modules.clion</depends>
+  <extensions defaultExtensionNs="com.intellij">
+    <!-- File Type Registration for .keet -->
+    <fileType name="Keet" implementationClass="com.keet.plugin.KeetFileType" fieldName="INSTANCE" language="Keet" extensions="keet" />
+    <!-- Autocompletion Contributor -->
+    <completion.contributor language="Keet" implementationClass="com.keet.plugin.KeetCompletionContributor" />
+    <!-- Real-Time Error Diagnostics via keety linting -->
+    <externalAnnotator language="Keet" implementationClass="com.keet.plugin.KeetExternalAnnotator" />
+  </extensions>
+</idea-plugin>
