@@ -1370,6 +1370,13 @@ namespace UIEngine {
             ? window.crypto.randomUUID().replace(/-/g, "")
             : "tab_" + Math.random().toString(36).substring(2) + Date.now().toString(36);
 
+        let ws = null;
+        let wsConnected = false;
+        let reconnectTimer = null;
+        let reconnectDelay = 1000;
+        const MAX_RECONNECT_DELAY = 10000;
+        let pendingResolvers = [];
+
         function getSessionId() {
             return currentSessionId;
         }
@@ -1383,6 +1390,81 @@ namespace UIEngine {
             if (serverRoute && window.location.pathname !== serverRoute) {
                 window.history.pushState({}, "", serverRoute);
             }
+        }
+
+        function resolvePendingRequests() {
+            const resolvers = pendingResolvers;
+            pendingResolvers = [];
+            for (const r of resolvers) r();
+        }
+
+        function connectWebSocket() {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                return;
+            }
+            try {
+                const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+                const sid = getSessionId();
+                const wsUrl = proto + "//" + window.location.host + "/ws?sessionId=" + encodeURIComponent(sid);
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    wsConnected = true;
+                    reconnectDelay = 1000;
+                    if (!currentVNode) {
+                        ws.send(JSON.stringify({ type: "sync" }));
+                    }
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        if (!msg || typeof msg !== "object") return;
+
+                        if (msg.type === "init") {
+                            if (msg.sessionId) currentSessionId = msg.sessionId;
+                        } else if (msg.type === "vdom") {
+                            if (msg.vdom) {
+                                renderTree(msg.vdom);
+                            }
+                            if (msg.path && window.location.pathname !== msg.path) {
+                                window.history.pushState({}, "", msg.path);
+                            }
+                            resolvePendingRequests();
+                        } else if (msg.type === "error") {
+                            resolvePendingRequests();
+                            showToast(msg.error || "Server error occurred", true);
+                        } else if (msg.type === "notification") {
+                            showToast(msg.message || msg.title || JSON.stringify(msg), false);
+                        }
+                    } catch (e) {
+                        console.error("Malformed WebSocket message:", e);
+                    }
+                };
+
+                ws.onclose = () => {
+                    wsConnected = false;
+                    resolvePendingRequests();
+                    scheduleReconnect();
+                };
+
+                ws.onerror = () => {
+                    wsConnected = false;
+                    resolvePendingRequests();
+                };
+            } catch (err) {
+                console.warn("WebSocket initialization error:", err);
+                scheduleReconnect();
+            }
+        }
+
+        function scheduleReconnect() {
+            if (reconnectTimer) return;
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                connectWebSocket();
+                reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT_DELAY);
+            }, reconnectDelay);
         }
 
         function renderTree(nextVNode) {
@@ -1403,19 +1485,23 @@ namespace UIEngine {
                 if (pushState && window.location.pathname !== targetPath) {
                     window.history.pushState({}, "", targetPath);
                 }
-                const sid = getSessionId();
-                const res = await fetch("/navigate", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-Session-Id": sid
-                    },
-                    body: JSON.stringify({ path: targetPath })
-                });
-                syncSessionId(res);
-                if (res.ok) {
-                    const nextVNode = await res.json();
-                    renderTree(nextVNode);
+                if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "navigate", path: targetPath }));
+                } else {
+                    const sid = getSessionId();
+                    const res = await fetch("/navigate", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Session-Id": sid
+                        },
+                        body: JSON.stringify({ path: targetPath })
+                    });
+                    syncSessionId(res);
+                    if (res.ok) {
+                        const nextVNode = await res.json();
+                        renderTree(nextVNode);
+                    }
                 }
             } catch (err) {
                 console.error("Route navigation failed:", err);
@@ -1472,41 +1558,55 @@ namespace UIEngine {
             }
 
             try {
-                const sid = getSessionId();
-                const res = await fetch("/event", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-Session-Id": sid
-                    },
-                    body: JSON.stringify({ handlerId, ...eventPayload })
-                });
-                syncSessionId(res);
-                if (res.ok) {
-                    const nextVNode = await res.json();
-                    renderTree(nextVNode);
-                } else if (res.status === 404) {
-                    const currentPath = encodeURIComponent(window.location.pathname || "/");
-                    const vdomRes = await fetch("/vdom?path=" + currentPath, {
-                        headers: { "X-Session-Id": sid }
+                if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+                    await new Promise((resolve) => {
+                        const timer = setTimeout(() => {
+                            pendingResolvers = pendingResolvers.filter(r => r !== resolve);
+                            resolve();
+                        }, 5000);
+                        pendingResolvers.push(() => {
+                            clearTimeout(timer);
+                            resolve();
+                        });
+                        ws.send(JSON.stringify({ handlerId, ...eventPayload, type: "event" }));
                     });
-                    syncSessionId(vdomRes);
-                    if (vdomRes.ok) {
-                        renderTree(await vdomRes.json());
-                    }
                 } else {
-                    let errMsg = "Server action failed (HTTP " + res.status + ")";
-                    try {
-                        const errData = await res.json();
-                        if (errData && errData.error) {
-                            errMsg = errData.error;
+                    const sid = getSessionId();
+                    const res = await fetch("/event", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Session-Id": sid
+                        },
+                        body: JSON.stringify({ handlerId, ...eventPayload })
+                    });
+                    syncSessionId(res);
+                    if (res.ok) {
+                        const nextVNode = await res.json();
+                        renderTree(nextVNode);
+                    } else if (res.status === 404) {
+                        const currentPath = encodeURIComponent(window.location.pathname || "/");
+                        const vdomRes = await fetch("/vdom?path=" + currentPath, {
+                            headers: { "X-Session-Id": sid }
+                        });
+                        syncSessionId(vdomRes);
+                        if (vdomRes.ok) {
+                            renderTree(await vdomRes.json());
                         }
-                    } catch (_) {}
-                    showToast(errMsg, true);
+                    } else {
+                        let errMsg = "Server action failed (HTTP " + res.status + ")";
+                        try {
+                            const errData = await res.json();
+                            if (errData && errData.error) {
+                                errMsg = errData.error;
+                            }
+                        } catch (_) {}
+                        showToast(errMsg, true);
+                    }
                 }
             } catch (err) {
                 console.error("Event dispatch failed:", err);
-                showToast("Network request failed: " + (err.message || "Connection error"), true);
+                showToast("Action failed: " + (err.message || "Connection error"), true);
             } finally {
                 if (triggerEl && triggerEl.nodeType === 1 && document.body.contains(triggerEl)) {
                     triggerEl.classList.remove("keet-pending");
@@ -1803,41 +1903,58 @@ namespace UIEngine {
         async function initApp() {
             const sid = getSessionId();
             const initialPath = encodeURIComponent(window.location.pathname || "/");
-            const res = await fetch("/vdom?path=" + initialPath, {
-                headers: { "X-Session-Id": sid }
-            });
-            syncSessionId(res);
-            if (res.ok) {
-                const initialVNode = await res.json();
-                renderTree(initialVNode);
+            try {
+                const res = await fetch("/vdom?path=" + initialPath, {
+                    headers: { "X-Session-Id": sid }
+                });
+                syncSessionId(res);
+                if (res.ok) {
+                    const initialVNode = await res.json();
+                    renderTree(initialVNode);
+                }
+            } catch (err) {
+                console.warn("Initial HTTP VDOM fetch failed:", err);
             }
+            connectWebSocket();
         }
 
         async function switchLocale(newLocale) {
             try {
-                const sid = getSessionId();
-                const res = await fetch("/locale", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-Session-Id": sid
-                    },
-                    body: JSON.stringify({ locale: newLocale })
-                });
-                syncSessionId(res);
-                if (res.ok) {
-                    const nextVNode = await res.json();
-                    renderTree(nextVNode);
+                if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "locale", locale: newLocale }));
+                } else {
+                    const sid = getSessionId();
+                    const res = await fetch("/locale", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Session-Id": sid
+                        },
+                        body: JSON.stringify({ locale: newLocale })
+                    });
+                    syncSessionId(res);
+                    if (res.ok) {
+                        const nextVNode = await res.json();
+                        renderTree(nextVNode);
+                    }
                 }
             } catch (err) {
                 console.error("Locale switch failed:", err);
             }
         }
 
+        setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "ping" }));
+            }
+        }, 30000);
+
         window.keet = {
             navigateTo,
             switchLocale,
-            getSessionId
+            getSessionId,
+            getWebSocket: () => ws,
+            isWebSocketConnected: () => wsConnected
         };
 
         window.addEventListener("popstate", () => {
