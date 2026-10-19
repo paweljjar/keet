@@ -144,6 +144,11 @@ namespace UIEngine {
                 } catch (...) {
                     rootNode = createErrorBoundaryNode("An unknown render error occurred");
                 }
+                StyleSheet treeStyles;
+                Detail::harvestStylesFromTree(rootNode, treeStyles);
+                if (!treeStyles.empty()) {
+                    Detail::registerTreeStyles(treeStyles);
+                }
                 if (Detail::reconcileUnmountedComponents()) {
                     Detail::resetRenderContext();
                     session->handlerRegistry.clear();
@@ -154,6 +159,11 @@ namespace UIEngine {
                         rootNode = createErrorBoundaryNode(e.what());
                     } catch (...) {
                         rootNode = createErrorBoundaryNode("An unknown render error occurred");
+                    }
+                    StyleSheet reconciledStyles;
+                    Detail::harvestStylesFromTree(rootNode, reconciledStyles);
+                    if (!reconciledStyles.empty()) {
+                        Detail::registerTreeStyles(reconciledStyles);
                     }
                     Detail::reconcileUnmountedComponents();
                 }
@@ -170,6 +180,11 @@ namespace UIEngine {
             } catch (...) {
                 rootNode = createErrorBoundaryNode("An unknown render error occurred");
             }
+            StyleSheet fallbackTreeStyles;
+            Detail::harvestStylesFromTree(rootNode, fallbackTreeStyles);
+            if (!fallbackTreeStyles.empty()) {
+                Detail::registerTreeStyles(fallbackTreeStyles);
+            }
             if (Detail::reconcileUnmountedComponents()) {
                 Detail::resetRenderContext();
                 fallbackHandlerRegistry.clear();
@@ -180,6 +195,11 @@ namespace UIEngine {
                     rootNode = createErrorBoundaryNode(e.what());
                 } catch (...) {
                     rootNode = createErrorBoundaryNode("An unknown render error occurred");
+                }
+                StyleSheet reconciledFallbackStyles;
+                Detail::harvestStylesFromTree(rootNode, reconciledFallbackStyles);
+                if (!reconciledFallbackStyles.empty()) {
+                    Detail::registerTreeStyles(reconciledFallbackStyles);
                 }
                 Detail::reconcileUnmountedComponents();
             }
@@ -674,6 +694,72 @@ namespace UIEngine {
             std::lock_guard lock(fallbackStateMutex);
             fallbackStateStore[key] = std::move(value);
         }
+
+        namespace {
+            std::mutex harvestedStylesMutex; // Mutex guarding dynamic harvested style registries and CSS cache
+            StyleSheet baseAppStyleSheet; // Base application stylesheet supplied via serveApp
+            std::map<std::string, StyleSheet> registeredComponentStyles; // Map of component scope keys to their declared styles
+            std::vector<StyleSheet> treeHarvestedStyles; // Additional stylesheets collected from VNode trees
+            std::string cachedMergedCss; // Serialized cached CSS document
+            bool styleCacheDirty = true; // True if cached CSS must be regenerated
+        }
+
+        void registerComponentStyles(const std::string& scopeKey, StyleSheet styles) { // Register a component's declared stylesheet in the active style registry
+            if (styles.empty()) return;
+            std::lock_guard lock(harvestedStylesMutex);
+            const auto it = registeredComponentStyles.find(scopeKey);
+            if (it != registeredComponentStyles.end() && it->second.rules() == styles.rules()) {
+                return;
+            }
+            registeredComponentStyles[scopeKey] = std::move(styles);
+            styleCacheDirty = true;
+        }
+
+        void harvestStylesFromTree(const VNode& node, StyleSheet& collected) { // Recursively traverse a VNode tree and collect all attached stylesheets
+            if (node.styles && !node.styles->empty()) {
+                collected.appendRules(*node.styles);
+            }
+            for (const auto& child : node.children) {
+                harvestStylesFromTree(child, collected);
+            }
+        }
+
+        void registerTreeStyles(const StyleSheet& styles) { // Merge newly discovered tree styles into the global style registry
+            if (styles.empty()) return;
+            std::lock_guard lock(harvestedStylesMutex);
+            treeHarvestedStyles.push_back(styles);
+            styleCacheDirty = true;
+        }
+
+        void setBaseStyleSheet(StyleSheet sheet) { // Configure base application stylesheet passed to serveApp()
+            std::lock_guard lock(harvestedStylesMutex);
+            baseAppStyleSheet = std::move(sheet);
+            styleCacheDirty = true;
+        }
+
+        std::string getMergedCss() { // Generate or return cached merged CSS including base styles and harvested component styles
+            std::lock_guard lock(harvestedStylesMutex);
+            if (!styleCacheDirty) {
+                return cachedMergedCss;
+            }
+            StyleSheet merged = baseAppStyleSheet;
+            for (const auto& [_, sheet] : registeredComponentStyles) {
+                merged.appendRules(sheet);
+            }
+            for (const auto& sheet : treeHarvestedStyles) {
+                merged.appendRules(sheet);
+            }
+            cachedMergedCss = merged.toCss();
+            styleCacheDirty = false;
+            return cachedMergedCss;
+        }
+
+        void clearHarvestedStyles() { // Clear harvested component styles
+            std::lock_guard lock(harvestedStylesMutex);
+            registeredComponentStyles.clear();
+            treeHarvestedStyles.clear();
+            styleCacheDirty = true;
+        }
     }
 
     StyleSheet& StyleSheet::rule(std::string selector, StyleDeclarations declarations) { // Add or merge CSS declarations for a given CSS selector
@@ -689,10 +775,14 @@ namespace UIEngine {
         return *this; // Return reference to *this for fluent method chaining
     }
 
-    void StyleSheet::merge(const StyleSheet& other) { // Merge all rules from another StyleSheet into this one
+    void StyleSheet::appendRules(const StyleSheet& other) { // Append and merge rules from another stylesheet
         for (const auto& [selector, declarations] : other._rules) {
             rule(selector, declarations);
         }
+    }
+
+    void StyleSheet::merge(const StyleSheet& other) { // Merge all rules from another StyleSheet into this one (deprecated)
+        appendRules(other);
     }
 
     bool StyleSheet::empty() const { // Check whether the stylesheet contains any rules
@@ -1401,7 +1491,18 @@ namespace UIEngine {
     ) { // Register "/", "/styles.css", "/vdom", "/navigate", and "/event" routes on the frontend server to serve the C++ VDOM app
         configuredApiBaseUrl = std::move(apiBaseUrl); // Store the configured backend base URL for UIEngine::fetch
         const std::string htmlShell = buildHtmlShell(pageTitle); // Pre-build the minimal HTML shell
-        const std::string cssContent = styleSheet.toCss(); // Serialize the C++ StyleSheet into a CSS string
+
+        Detail::setBaseStyleSheet(styleSheet); // Set base application stylesheet
+        try {
+            VNode initialTree = rootFactory();
+            StyleSheet initialStyles;
+            Detail::harvestStylesFromTree(initialTree, initialStyles);
+            if (!initialStyles.empty()) {
+                Detail::registerTreeStyles(initialStyles);
+            }
+        } catch (...) {
+            // Initial harvest dry-run can fail if components expect session context; styles will be harvested on first renderRootVNode pass
+        }
 
         const auto serveHtmlShell = [htmlShell](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Serve the HTML shell for GET / and any SPA client-side route
             const std::string sessionId = HTTPServer::extractOrCreateSessionId(req);
@@ -1420,11 +1521,11 @@ namespace UIEngine {
         frontend.get("/", serveHtmlShell);
         frontend.setFallbackGetHandler(serveHtmlShell);
 
-        frontend.get("/styles.css", [cssContent](const HTTPServer::ServerRequest&, HTTPServer::ServerResponse& res) { // Serve the generated CSS stylesheet at GET /styles.css
+        frontend.get("/styles.css", [](const HTTPServer::ServerRequest&, HTTPServer::ServerResponse& res) { // Serve the dynamically harvested and cached CSS stylesheet at GET /styles.css
             res.status = HTTP_OK;
             res.contentType = "text/css";
             res.charset = "utf-8";
-            res.body = cssContent;
+            res.body = Detail::getMergedCss();
         });
 
         frontend.get("/vdom", [rootFactory](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Serve the live serialized VNode JSON tree at GET /vdom
