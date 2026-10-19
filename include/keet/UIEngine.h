@@ -13,6 +13,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <utility>
 #include <variant>
@@ -112,13 +113,27 @@ namespace UIEngine {
         std::string currentPath = "/"; // Active client-side route path for this session
         std::string locale = "en"; // Active client locale for this session
 
+        std::set<int> wsFds; // Active WebSocket file descriptors associated with this session
+        HTTPServer::Server* server = nullptr; // Server instance managing WebSocket transmissions
+        std::function<void()> renderPusher; // Callback re-rendering and pushing VDOM tree over WebSocket
+
         void touch(); // Update lastAccessed timestamp to current steady clock time
+        void bindWebSocket(int fd, HTTPServer::Server* srv); // Associate a WebSocket connection with this session
+        void unbindWebSocket(int fd); // Remove an associated WebSocket connection from this session
+        [[nodiscard]] bool hasActiveWebSocket() const; // Check if session has at least one active WebSocket connection
+        bool pushUpdate(const HTTPServer::Json& payload); // Push arbitrary JSON message to all connected WebSockets
+        bool pushText(std::string_view text); // Push raw text/JSON message to all connected WebSockets
+        bool pushState(const std::string& key, const HTTPServer::Json& value); // Push a state mutation notification
+        bool pushRender(); // Re-render VDOM for this session and push updated tree to connected WebSockets
     };
 
     [[nodiscard]] std::string currentPath(); // Retrieve the normalized active client-side route path for the current session
     void navigate(std::string path); // Update the active client-side route path for the current session
     [[nodiscard]] std::string currentLocale(); // Retrieve the active locale for the current session
     void setLocale(std::string locale); // Update the active locale for the current session
+    [[nodiscard]] std::shared_ptr<Session> currentSession(); // Retrieve the active Session on the calling thread
+    void broadcastRender(); // Re-render and push updated VDOM to all active connected sessions
+    void broadcastUpdate(const HTTPServer::Json& payload); // Push JSON payload to all active connected sessions
 
     class SessionManager { // Thread-safe manager for creating, looking up, and expiring client sessions
         public:
@@ -130,6 +145,12 @@ namespace UIEngine {
             void setTtl(std::chrono::seconds ttl); // Configure the maximum idle time before an inactive session is pruned
             [[nodiscard]] size_t activeSessionCount(); // Return the number of currently tracked active sessions
 
+            std::shared_ptr<Session> getSessionByFd(int fd); // Look up session by associated WebSocket fd
+            void bindSessionFd(int fd, const std::string& sessionId); // Map fd to sessionId
+            void unbindSessionFd(int fd); // Unmap fd and remove from its session
+            void broadcastRender(); // Re-render and push updated VDOM to all active sessions
+            void broadcastUpdate(const HTTPServer::Json& payload); // Push JSON payload to all active sessions
+
         private:
             SessionManager() = default;
             void _pruneExpiredSessionsLocked(); // Prune sessions that have exceeded the configured TTL (must hold _mutex)
@@ -137,6 +158,7 @@ namespace UIEngine {
             std::mutex _mutex; // Mutex protecting the session registry
             std::chrono::seconds _ttl{1800}; // Idle session time-to-live (defaults to 30 minutes)
             std::map<std::string, std::shared_ptr<Session>> _sessions; // Registry mapping session IDs to Session instances
+            std::map<int, std::string> _fdToSessionId; // Mapping of active WebSocket socket fds to session IDs
     };
 
     class SessionContext { // RAII guard binding a Session pointer to thread-local storage for the duration of a request
