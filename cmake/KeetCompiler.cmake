@@ -38,3 +38,30 @@ function(keet_target_sources TARGET_NAME SCOPE)
     target_sources(${TARGET_NAME} ${SCOPE} ${GENERATED_SRCS} ${GENERATED_HEADERS})
     target_include_directories(${TARGET_NAME} ${SCOPE} "${GENERATED_DIR}")
 endfunction()
+
+# keet_add_application(<target> <main_keet_file> [EXTRA_SOURCES...])
+# Compiles a full-stack .keet application (with <server>, <script>, <template>, <style>)
+# into a complete executable target linked against the keet runtime library.
+function(keet_add_application TARGET_NAME MAIN_KEET_FILE)
+    set(EXTRA_SOURCES ${ARGN})
+    set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/keet")
+    file(MAKE_DIRECTORY "${GENERATED_DIR}")
+
+    get_filename_component(FILE_NAME "${MAIN_KEET_FILE}" NAME_WE)
+    get_filename_component(KEET_ABS "${MAIN_KEET_FILE}" ABSOLUTE)
+
+    set(OUT_CPP "${GENERATED_DIR}/${FILE_NAME}.cpp")
+    set(OUT_H "${GENERATED_DIR}/${FILE_NAME}.h")
+
+    add_custom_command(
+        OUTPUT "${OUT_CPP}" "${OUT_H}"
+        COMMAND keety --app -i "${KEET_ABS}" -o "${OUT_CPP}" -h "${OUT_H}" -c "${FILE_NAME}"
+        DEPENDS "${KEET_ABS}" keety
+        COMMENT "keety: compiling full-stack application ${MAIN_KEET_FILE} -> ${TARGET_NAME} \U0001F431"
+        VERBATIM
+    )
+
+    add_executable(${TARGET_NAME} "${OUT_CPP}" "${OUT_H}" ${EXTRA_SOURCES})
+    target_include_directories(${TARGET_NAME} PRIVATE "${GENERATED_DIR}")
+    target_link_libraries(${TARGET_NAME} PRIVATE keet)
+endfunction()

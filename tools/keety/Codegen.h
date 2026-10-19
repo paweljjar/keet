@@ -21,22 +21,28 @@ namespace Keety {
 
     class Codegen { // Generates optimized C++20 code emitting UIEngine::Component subclasses
         public:
-            explicit Codegen(const SourceFile& ast, std::string headerFileName = "")
-                : _ast(ast), _headerFileName(std::move(headerFileName)) {}
+            explicit Codegen(const SourceFile& ast, std::string headerFileName = "", bool appMode = false)
+                : _ast(ast), _headerFileName(std::move(headerFileName)), _appMode(appMode) {}
+
+            void setAppMode(bool appMode) { _appMode = appMode; }
+            [[nodiscard]] bool isAppMode() const { return _appMode; }
 
             GeneratedCode generate(); // Produce complete C++20 header and source files
 
         private:
             std::string _generateHeader();
             std::string _generateSource();
+            std::string _generateAppMain();
 
             std::string _mapType(const std::string& typeName) const;
+            std::string _mapDbType(const std::string& typeName) const;
             void _collectInternedStrings(const TemplateNode& node);
             void _generateNodeEmission(std::ostream& os, const TemplateNode& node, const std::string& parentVecName, int& nodeCounter);
             void _generateElementEmission(std::ostream& os, const ElementNode& elem, const std::string& parentVecName, int& nodeCounter);
 
             const SourceFile& _ast;
             std::string _headerFileName;
+            bool _appMode = false;
             std::set<std::string> _internedTags;
             std::set<std::string> _internedProps;
     };

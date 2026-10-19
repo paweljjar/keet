@@ -10,6 +10,21 @@
 #include "Json.h"
 
 namespace HTTPServer {
+    class Database;
+
+    class TableProxy { // Ergonomic fluent table accessor supporting direct CRUD operations
+        public:
+            TableProxy(Database& db, std::string tableName);
+            [[nodiscard]] Json::Array select(const Json::Object& where = {}) const;
+            [[nodiscard]] Json::Array find(const Json::Object& where = {}) const;
+            Json::Object insert(const Json::Object& record);
+            Json::Array update(const Json::Object& updates, const Json::Object& where = {});
+            Json::Array remove(const Json::Object& where = {});
+        private:
+            Database& _db;
+            std::string _table;
+    };
+
     class Database { // Simple file-backed JSON database that persists collections as key-value mappings
         public:
             explicit Database(std::string path, bool createIfNotExists = false); // Constructor that initializes database file path and loads or initializes the JSON file
@@ -20,6 +35,7 @@ namespace HTTPServer {
             const std::string& getPath() const; // Return a const reference to the database file path
             size_t collectionCount() const; // Return the number of collections (top-level keys) currently stored in the database
             bool hasTable(const std::string& tableName) const; // Check if a table with the given name exists in the database
+            TableProxy table(std::string tableName); // Return an ergonomic TableProxy for fluent queries on the specified table
             bool createTable(const std::string& tableName, const Json::Object& scheme); // Create a new table with the given name and validated column schema in the database
             Json::Object insert(const std::string& tableName, const Json::Object& record); // Validate and insert a new record into the specified table, returning the stored record
             Json::Array select(const std::string& tableName, const Json::Object& where = {}) const; // Query and return records from the specified table matching the given key-value filter criteria

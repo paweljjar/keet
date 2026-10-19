@@ -25,6 +25,7 @@ namespace {
                   << "  -o, --output-source <path>    Path to generated .cpp implementation file\n"
                   << "  -h, --output-header <path>    Path to generated .h header file\n"
                   << "  -c, --component-name <name>   Override generated component class name\n"
+                  << "      --app                     Generate standalone application entry point with main()\n"
                   << "      --lint                    Perform lexical & syntactic check without emitting code\n"
                   << "      --help                    Display this help message and exit\n";
     }
@@ -48,6 +49,7 @@ int main(int argc, char* argv[]) {
     std::string outputHeaderFile;
     std::string componentName;
     bool lintOnly = false;
+    bool appMode = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -56,6 +58,8 @@ int main(int argc, char* argv[]) {
             return 0;
         } else if (arg == "--lint") {
             lintOnly = true;
+        } else if (arg == "--app") {
+            appMode = true;
         } else if ((arg == "-i" || arg == "--input") && i + 1 < argc) {
             inputFile = argv[++i];
         } else if ((arg == "-o" || arg == "--output-source") && i + 1 < argc) {
@@ -116,7 +120,7 @@ int main(int argc, char* argv[]) {
         // Step 3: C++20 Code Generation
         std::filesystem::path headerPath(outputHeaderFile);
         std::string headerFileName = headerPath.filename().string();
-        Keety::Codegen codegen(*ast, headerFileName);
+        Keety::Codegen codegen(*ast, headerFileName, appMode);
         Keety::GeneratedCode code = codegen.generate();
 
         // Ensure output directories exist
