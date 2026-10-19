@@ -10,6 +10,7 @@ add_library(keet STATIC
         src/UIEngine.cpp
         src/Json.cpp
         src/Database.cpp
+        src/Localization.cpp
 )
 
 # Define public include directories so consuming apps can find #include <keet/Server.h>
