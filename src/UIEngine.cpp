@@ -29,6 +29,7 @@ namespace UIEngine {
         std::map<std::string, std::any> fallbackStateStore; // Fallback state storage for non-session or startup state access
         std::map<std::string, std::function<void()>> fallbackMountedComponents; // Fallback registry of mounted components outside an active session
         std::string fallbackCurrentPath = "/"; // Fallback route path when running outside an active session context
+        std::string fallbackLocale = "en"; // Fallback locale when running outside an active session context
 
         std::mutex fallbackHandlerMutex; // Mutex guarding fallback handler registry
         std::map<std::string, EventHandler> fallbackHandlerRegistry; // Fallback handler registry
@@ -273,6 +274,41 @@ namespace UIEngine {
         }
         std::lock_guard lock(fallbackStateMutex);
         fallbackCurrentPath = std::move(normalized);
+    }
+
+    std::string currentLocale() { // Retrieve the active locale for the current session
+        const auto session = SessionContext::getCurrentSession();
+        if (session) {
+            std::lock_guard lock(session->mutex);
+            if (!session->locale.empty()) {
+                return session->locale;
+            }
+        }
+        std::lock_guard lock(fallbackStateMutex);
+        if (!fallbackLocale.empty()) {
+            return fallbackLocale;
+        }
+        return Localization::instance().getDefaultLocale();
+    }
+
+    void setLocale(std::string locale) { // Update the active locale for the current session
+        const auto session = SessionContext::getCurrentSession();
+        if (session) {
+            std::lock_guard lock(session->mutex);
+            session->locale = std::move(locale);
+            return;
+        }
+        std::lock_guard lock(fallbackStateMutex);
+        fallbackLocale = std::move(locale);
+    }
+
+    namespace {
+        struct LocalizationInit {
+            LocalizationInit() {
+                Localization::instance().setLocaleProvider(currentLocale);
+            }
+        };
+        LocalizationInit localizationInitInstance;
     }
 
     SessionManager& SessionManager::instance() { // Retrieve the singleton instance of SessionManager

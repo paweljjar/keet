@@ -20,6 +20,7 @@
 
 #include "Json.h"
 #include "Server.h"
+#include "Localization.h"
 
 namespace UIEngine {
     struct Event { // Represents a DOM event dispatched from the browser runtime to a C++ event handler
@@ -109,12 +110,15 @@ namespace UIEngine {
         std::chrono::steady_clock::time_point lastAccessed = std::chrono::steady_clock::now(); // Timestamp of last client interaction
         std::map<std::string, std::function<void()>> mountedComponents; // Per-session registry mapping mounted component scope keys to their onUnmount callbacks
         std::string currentPath = "/"; // Active client-side route path for this session
+        std::string locale = "en"; // Active client locale for this session
 
         void touch(); // Update lastAccessed timestamp to current steady clock time
     };
 
     [[nodiscard]] std::string currentPath(); // Retrieve the normalized active client-side route path for the current session
     void navigate(std::string path); // Update the active client-side route path for the current session
+    [[nodiscard]] std::string currentLocale(); // Retrieve the active locale for the current session
+    void setLocale(std::string locale); // Update the active locale for the current session
 
     class SessionManager { // Thread-safe manager for creating, looking up, and expiring client sessions
         public:
