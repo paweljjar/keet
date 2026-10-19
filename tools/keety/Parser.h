@@ -62,9 +62,18 @@ namespace Keety {
             }
 
             // Section parsers
+            std::unique_ptr<ServerBlock> _parseServer();
             std::unique_ptr<ScriptBlock> _parseScript();
             std::unique_ptr<TemplateBlock> _parseTemplate();
             std::unique_ptr<StyleBlock> _parseStyle();
+
+            // Server declaration parsers
+            std::shared_ptr<DatabaseDecl> _parseDatabase();
+            std::shared_ptr<TableDecl> _parseTable();
+            std::shared_ptr<TableColumnDecl> _parseTableColumn();
+            std::shared_ptr<BackendServerDecl> _parseBackend();
+            std::shared_ptr<RouteDecl> _parseRoute();
+            std::shared_ptr<FrontendServerDecl> _parseFrontend();
 
             // Script declaration parsers
             std::shared_ptr<ImportCppDecl> _parseImportCpp();

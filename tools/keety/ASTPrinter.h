@@ -29,10 +29,68 @@ namespace Keety {
                 _emitIndent();
                 _out << "SourceFile: " << node.componentName << "\n";
                 _indent += _indentStep;
+                if (node.server) node.server->accept(*this);
                 if (node.script) node.script->accept(*this);
                 if (node.templateBlock) node.templateBlock->accept(*this);
                 if (node.styleBlock) node.styleBlock->accept(*this);
                 _indent -= _indentStep;
+            }
+
+            void visit(const ServerBlock& node) override {
+                _emitIndent();
+                _out << "ServerBlock\n";
+                _indent += _indentStep;
+                if (node.database) node.database->accept(*this);
+                if (node.backend) node.backend->accept(*this);
+                if (node.frontend) node.frontend->accept(*this);
+                _indent -= _indentStep;
+            }
+
+            void visit(const DatabaseDecl& node) override {
+                _emitIndent();
+                _out << "Database: " << node.name << "(\"" << node.filePath << "\") with "
+                     << node.tables.size() << " tables\n";
+                _indent += _indentStep;
+                for (const auto& tbl : node.tables) tbl->accept(*this);
+                _indent -= _indentStep;
+            }
+
+            void visit(const TableDecl& node) override {
+                _emitIndent();
+                _out << "Table: " << node.name << " (" << node.columns.size() << " columns)\n";
+                _indent += _indentStep;
+                for (const auto& col : node.columns) col->accept(*this);
+                _indent -= _indentStep;
+            }
+
+            void visit(const TableColumnDecl& node) override {
+                _emitIndent();
+                _out << "Column: " << node.name << ": " << node.typeName;
+                if (node.isPrimaryKey) _out << " primary_key";
+                if (node.isAutoIncrement) _out << " auto_increment";
+                if (!node.defaultValueExpr.empty()) _out << " default " << node.defaultValueExpr;
+                _out << "\n";
+            }
+
+            void visit(const BackendServerDecl& node) override {
+                _emitIndent();
+                _out << "BackendServer: " << node.name << " (port: " << node.port
+                     << ", threads: " << node.threads << ", " << node.routes.size() << " routes)\n";
+                _indent += _indentStep;
+                for (const auto& route : node.routes) route->accept(*this);
+                _indent -= _indentStep;
+            }
+
+            void visit(const RouteDecl& node) override {
+                _emitIndent();
+                _out << "Route: " << node.method << " \"" << node.path << "\" => ("
+                     << node.paramName << ")\n";
+            }
+
+            void visit(const FrontendServerDecl& node) override {
+                _emitIndent();
+                _out << "FrontendServer: " << node.name << " (port: " << node.port
+                     << ", api: \"" << node.apiBaseUrl << "\", title: \"" << node.pageTitle << "\")\n";
             }
 
             void visit(const ScriptBlock& node) override {

@@ -36,7 +36,8 @@ namespace Keety {
         private:
             // Mode flags for context-sensitive SFC lexing
             enum class LexerMode {
-                Root, // Expecting <script>, <template>, or <style> tags
+                Root, // Expecting <server>, <script>, <template>, or <style> tags
+                Server, // Inside <server> ... </server>
                 Script, // Inside <script> ... </script>
                 Template, // Inside <template> ... </template>
                 TemplateTag, // Inside an XML/HTML tag header: <div ... >

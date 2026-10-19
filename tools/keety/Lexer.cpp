@@ -67,6 +67,16 @@ namespace Keety {
         if (text == "else") return Token(TokenKind::KwElse, text, loc);
         if (text == "for") return Token(TokenKind::KwFor, text, loc);
         if (text == "in") return Token(TokenKind::KwIn, text, loc);
+        if (text == "database") return Token(TokenKind::KwDatabase, text, loc);
+        if (text == "table") return Token(TokenKind::KwTable, text, loc);
+        if (text == "primary_key") return Token(TokenKind::KwPrimaryKey, text, loc);
+        if (text == "auto_increment") return Token(TokenKind::KwAutoIncrement, text, loc);
+        if (text == "backend") return Token(TokenKind::KwBackend, text, loc);
+        if (text == "frontend") return Token(TokenKind::KwFrontend, text, loc);
+        if (text == "get") return Token(TokenKind::KwGet, text, loc);
+        if (text == "post") return Token(TokenKind::KwPost, text, loc);
+        if (text == "put") return Token(TokenKind::KwPut, text, loc);
+        if (text == "delete") return Token(TokenKind::KwDelete, text, loc);
 
         return Token(TokenKind::Identifier, text, loc);
     }
@@ -116,7 +126,10 @@ namespace Keety {
                 if (_isAtEnd()) break;
 
                 SourceLocation loc = _currentLoc();
-                if (_matchString("<script>")) {
+                if (_matchString("<server>")) {
+                    tokens.emplace_back(TokenKind::TagServerOpen, "<server>", loc);
+                    _mode = LexerMode::Server;
+                } else if (_matchString("<script>")) {
                     tokens.emplace_back(TokenKind::TagScriptOpen, "<script>", loc);
                     _mode = LexerMode::Script;
                 } else if (_matchString("<template>")) {
@@ -127,6 +140,67 @@ namespace Keety {
                     _mode = LexerMode::Style;
                 } else {
                     throw LexerException(std::string("Unexpected token outside SFC sections: '") + _peek() + "'", loc);
+                }
+            } else if (_mode == LexerMode::Server) {
+                _skipWhitespaceAndComments();
+                if (_isAtEnd()) break;
+
+                SourceLocation loc = _currentLoc();
+                if (_matchString("</server>")) {
+                    tokens.emplace_back(TokenKind::TagServerClose, "</server>", loc);
+                    _mode = LexerMode::Root;
+                    continue;
+                }
+
+                char c = _peek();
+                if (c == '"' || c == '\'') {
+                    tokens.push_back(_lexString(c));
+                } else if (std::isdigit(static_cast<unsigned char>(c))) {
+                    tokens.push_back(_lexNumber());
+                } else if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+                    tokens.push_back(_lexIdentifierOrKeyword());
+                } else if (c == '-' && _peek(1) == '>') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Arrow, "->", loc);
+                } else if (c == '=' && _peek(1) == '>') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::FatArrow, "=>", loc);
+                } else if (c == '{') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::LeftBrace, "{", loc);
+                } else if (c == '}') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::RightBrace, "}", loc);
+                } else if (c == '(') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::LeftParen, "(", loc);
+                } else if (c == ')') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::RightParen, ")", loc);
+                } else if (c == '[') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::LeftBracket, "[", loc);
+                } else if (c == ']') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::RightBracket, "]", loc);
+                } else if (c == ':') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::Colon, ":", loc);
+                } else if (c == ';') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::Semicolon, ";", loc);
+                } else if (c == ',') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::Comma, ",", loc);
+                } else if (c == '.') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::Dot, ".", loc);
+                } else if (c == '=') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::Assign, "=", loc);
+                } else {
+                    std::string sym(1, _advance());
+                    tokens.emplace_back(TokenKind::Invalid, sym, loc);
                 }
             } else if (_mode == LexerMode::Script) {
                 _skipWhitespaceAndComments();

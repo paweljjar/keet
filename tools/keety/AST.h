@@ -27,6 +27,13 @@ namespace Keety {
 
     // Forward declarations of specific AST nodes
     struct SourceFile;
+    struct ServerBlock;
+    struct DatabaseDecl;
+    struct TableDecl;
+    struct TableColumnDecl;
+    struct BackendServerDecl;
+    struct RouteDecl;
+    struct FrontendServerDecl;
     struct ScriptBlock;
     struct ImportCppDecl;
     struct StateDecl;
@@ -47,6 +54,13 @@ namespace Keety {
             virtual ~ASTVisitor() = default;
 
             virtual void visit(const SourceFile& node) = 0;
+            virtual void visit(const ServerBlock& node) = 0;
+            virtual void visit(const DatabaseDecl& node) = 0;
+            virtual void visit(const TableDecl& node) = 0;
+            virtual void visit(const TableColumnDecl& node) = 0;
+            virtual void visit(const BackendServerDecl& node) = 0;
+            virtual void visit(const RouteDecl& node) = 0;
+            virtual void visit(const FrontendServerDecl& node) = 0;
             virtual void visit(const ScriptBlock& node) = 0;
             virtual void visit(const ImportCppDecl& node) = 0;
             virtual void visit(const StateDecl& node) = 0;
@@ -60,6 +74,78 @@ namespace Keety {
             virtual void visit(const ForBlockNode& node) = 0;
             virtual void visit(const StyleBlock& node) = 0;
             virtual void visit(const StyleRule& node) = 0;
+    };
+
+    // =========================================================================
+    // Full-Stack Server Block AST Definitions (<server>)
+    // =========================================================================
+
+    struct TableColumnDecl : public ASTNode { // Column schema declaration inside table <name> { ... }
+        std::string name; // Column name (e.g. "id", "title")
+        std::string typeName = "string"; // Data type ("int", "string", "bool", "float", "array", "object")
+        bool isPrimaryKey = false; // primary_key
+        bool isAutoIncrement = false; // auto_increment
+        std::string defaultValueExpr; // Optional default value expression
+
+        explicit TableColumnDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
+    struct TableDecl : public ASTNode { // Table schema declaration inside database <name> { ... }
+        std::string name; // Table name
+        std::vector<std::shared_ptr<TableColumnDecl>> columns; // Columns in this table
+
+        explicit TableDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
+    struct DatabaseDecl : public ASTNode { // Database declaration (database db("app.db") { ... })
+        std::string name = "db"; // Variable name for database
+        std::string filePath = "app.db"; // Database file path
+        std::vector<std::shared_ptr<TableDecl>> tables; // Defined tables
+
+        explicit DatabaseDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
+    struct RouteDecl : public ASTNode { // Backend REST endpoint route (e.g. get "/api/todos" => (req) { ... })
+        std::string method = "GET"; // "GET", "POST", "PUT", "DELETE"
+        std::string path = "/"; // Route path (e.g. "/api/todos")
+        std::string paramName = "req"; // Name of request param
+        std::string body; // Handler C++ statement block
+
+        explicit RouteDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
+    struct BackendServerDecl : public ASTNode { // Backend server declaration (backend api(port: 8000, threads: 4) { ... })
+        std::string name = "api"; // Variable name for backend server
+        int port = 8000; // Listening port
+        int threads = 4; // Worker thread pool size
+        std::vector<std::shared_ptr<RouteDecl>> routes; // Registered endpoints
+
+        explicit BackendServerDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
+    struct FrontendServerDecl : public ASTNode { // Frontend server declaration (frontend web(port: 8080, api: "...", title: "..."))
+        std::string name = "web"; // Variable name for frontend server
+        int port = 8080; // Listening port
+        int threads = 4; // Worker thread pool size
+        std::string apiBaseUrl = "http://localhost:8000"; // Configured backend base URL
+        std::string pageTitle = "Keet App"; // HTML shell document title
+
+        explicit FrontendServerDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
+    struct ServerBlock : public ASTNode { // Container node aggregating all server definitions inside <server>
+        std::shared_ptr<DatabaseDecl> database; // Optional database declaration
+        std::shared_ptr<BackendServerDecl> backend; // Optional backend server declaration
+        std::shared_ptr<FrontendServerDecl> frontend; // Optional frontend server declaration
+
+        explicit ServerBlock(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
     };
 
     // =========================================================================
@@ -280,6 +366,7 @@ namespace Keety {
 
     struct SourceFile : public ASTNode { // Top-level root AST node representing a complete .keet Single-File Component
         std::string componentName; // Derived component class name (e.g., "CounterCard")
+        std::unique_ptr<ServerBlock> server; // Optional <server> section AST (Full-Stack App mode)
         std::unique_ptr<ScriptBlock> script; // Optional <script> section AST
         std::unique_ptr<TemplateBlock> templateBlock; // Optional <template> section AST
         std::unique_ptr<StyleBlock> styleBlock; // Optional <style> section AST

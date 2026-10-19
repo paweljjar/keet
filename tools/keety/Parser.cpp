@@ -11,7 +11,12 @@ namespace Keety {
         auto file = std::make_unique<SourceFile>(_componentName, _peek().loc);
 
         while (!_isAtEnd()) {
-            if (_check(TokenKind::TagScriptOpen)) {
+            if (_check(TokenKind::TagServerOpen)) {
+                if (file->server) {
+                    throw ParserException("Duplicate <server> block in SFC", _peek().loc);
+                }
+                file->server = _parseServer();
+            } else if (_check(TokenKind::TagScriptOpen)) {
                 if (file->script) {
                     throw ParserException("Duplicate <script> block in SFC", _peek().loc);
                 }
@@ -32,6 +37,215 @@ namespace Keety {
         }
 
         return file;
+    }
+
+    std::unique_ptr<ServerBlock> Parser::_parseServer() {
+        SourceLocation loc = _consume(TokenKind::TagServerOpen, "Expected '<server>'").loc;
+        auto server = std::make_unique<ServerBlock>(loc);
+
+        while (!_isAtEnd() && !_check(TokenKind::TagServerClose)) {
+            if (_check(TokenKind::KwDatabase)) {
+                if (server->database) {
+                    throw ParserException("Duplicate database declaration in <server>", _peek().loc);
+                }
+                server->database = _parseDatabase();
+            } else if (_check(TokenKind::KwBackend)) {
+                if (server->backend) {
+                    throw ParserException("Duplicate backend declaration in <server>", _peek().loc);
+                }
+                server->backend = _parseBackend();
+            } else if (_check(TokenKind::KwFrontend)) {
+                if (server->frontend) {
+                    throw ParserException("Duplicate frontend declaration in <server>", _peek().loc);
+                }
+                server->frontend = _parseFrontend();
+            } else {
+                throw ParserException("Unexpected declaration in <server>: '" + _peek().text + "'", _peek().loc);
+            }
+        }
+
+        _consume(TokenKind::TagServerClose, "Expected '</server>' to close server section");
+        return server;
+    }
+
+    std::shared_ptr<DatabaseDecl> Parser::_parseDatabase() {
+        SourceLocation loc = _consume(TokenKind::KwDatabase, "Expected 'database'").loc;
+        auto db = std::make_shared<DatabaseDecl>(loc);
+
+        db->name = _consume(TokenKind::Identifier, "Expected database variable identifier").text;
+        _consume(TokenKind::LeftParen, "Expected '(' after database name");
+        db->filePath = _consume(TokenKind::StringLiteral, "Expected database file path string").text;
+        _consume(TokenKind::RightParen, "Expected ')' after database file path");
+
+        _consume(TokenKind::LeftBrace, "Expected '{' to start database table definitions");
+        while (!_isAtEnd() && !_check(TokenKind::RightBrace)) {
+            db->tables.push_back(_parseTable());
+        }
+        _consume(TokenKind::RightBrace, "Expected '}' after database table definitions");
+        _match(TokenKind::Semicolon); // Optional trailing semicolon
+
+        return db;
+    }
+
+    std::shared_ptr<TableDecl> Parser::_parseTable() {
+        SourceLocation loc = _consume(TokenKind::KwTable, "Expected 'table'").loc;
+        auto table = std::make_shared<TableDecl>(loc);
+
+        table->name = _consume(TokenKind::Identifier, "Expected table name identifier").text;
+        _consume(TokenKind::LeftBrace, "Expected '{' to begin table column definitions");
+
+        while (!_isAtEnd() && !_check(TokenKind::RightBrace)) {
+            table->columns.push_back(_parseTableColumn());
+            if (_check(TokenKind::Comma)) {
+                _advance();
+            }
+        }
+
+        _consume(TokenKind::RightBrace, "Expected '}' to close table column definitions");
+        _match(TokenKind::Semicolon); // Optional trailing semicolon
+        return table;
+    }
+
+    std::shared_ptr<TableColumnDecl> Parser::_parseTableColumn() {
+        SourceLocation loc = _peek().loc;
+        auto col = std::make_shared<TableColumnDecl>(loc);
+
+        col->name = _consume(TokenKind::Identifier, "Expected column name").text;
+        _consume(TokenKind::Colon, "Expected ':' after column name");
+        col->typeName = _consume(TokenKind::Identifier, "Expected column type name").text;
+
+        // Parse modifiers: primary_key, auto_increment, default <val>
+        while (!_isAtEnd() && !_check(TokenKind::Comma) && !_check(TokenKind::RightBrace)) {
+            if (_match(TokenKind::KwPrimaryKey)) {
+                col->isPrimaryKey = true;
+            } else if (_match(TokenKind::KwAutoIncrement)) {
+                col->isAutoIncrement = true;
+            } else if (_peek().text == "default") {
+                _advance(); // Consume "default"
+                if (_check(TokenKind::StringLiteral) || _check(TokenKind::NumberLiteral) || _check(TokenKind::Identifier)) {
+                    col->defaultValueExpr = _advance().text;
+                }
+            } else {
+                break;
+            }
+        }
+
+        return col;
+    }
+
+    std::shared_ptr<BackendServerDecl> Parser::_parseBackend() {
+        SourceLocation loc = _consume(TokenKind::KwBackend, "Expected 'backend'").loc;
+        auto backend = std::make_shared<BackendServerDecl>(loc);
+
+        backend->name = _consume(TokenKind::Identifier, "Expected backend server variable identifier").text;
+        _consume(TokenKind::LeftParen, "Expected '(' after backend identifier");
+
+        // Parse arguments: port: <num>, threads: <num>
+        while (!_isAtEnd() && !_check(TokenKind::RightParen)) {
+            std::string key = _consume(TokenKind::Identifier, "Expected argument name in backend configuration").text;
+            _consume(TokenKind::Colon, "Expected ':' after configuration key");
+            if (key == "port") {
+                backend->port = std::stoi(_consume(TokenKind::NumberLiteral, "Expected port number").text);
+            } else if (key == "threads") {
+                backend->threads = std::stoi(_consume(TokenKind::NumberLiteral, "Expected thread count").text);
+            } else {
+                _advance(); // Skip unrecognized argument
+            }
+            if (_check(TokenKind::Comma)) _advance();
+        }
+        _consume(TokenKind::RightParen, "Expected ')' after backend configuration");
+
+        _consume(TokenKind::LeftBrace, "Expected '{' to start backend route definitions");
+        while (!_isAtEnd() && !_check(TokenKind::RightBrace)) {
+            backend->routes.push_back(_parseRoute());
+        }
+        _consume(TokenKind::RightBrace, "Expected '}' after backend route definitions");
+        _match(TokenKind::Semicolon); // Optional trailing semicolon
+
+        return backend;
+    }
+
+    std::shared_ptr<RouteDecl> Parser::_parseRoute() {
+        SourceLocation loc = _peek().loc;
+        auto route = std::make_shared<RouteDecl>(loc);
+
+        if (_match(TokenKind::KwGet)) {
+            route->method = "GET";
+        } else if (_match(TokenKind::KwPost)) {
+            route->method = "POST";
+        } else if (_match(TokenKind::KwPut)) {
+            route->method = "PUT";
+        } else if (_match(TokenKind::KwDelete)) {
+            route->method = "DELETE";
+        } else {
+            throw ParserException("Expected HTTP method (get, post, put, delete) for route", loc);
+        }
+
+        route->path = _consume(TokenKind::StringLiteral, "Expected route path string").text;
+        _consume(TokenKind::FatArrow, "Expected '=>' after route path");
+
+        _consume(TokenKind::LeftParen, "Expected '(' for route handler parameter");
+        if (_check(TokenKind::Identifier)) {
+            route->paramName = _advance().text;
+        }
+        _consume(TokenKind::RightParen, "Expected ')' after route handler parameter");
+
+        // Parse route handler body: { ... }
+        _consume(TokenKind::LeftBrace, "Expected '{' to start route handler body");
+        int braceDepth = 1;
+        std::ostringstream bodyOss;
+        while (!_isAtEnd() && braceDepth > 0) {
+            if (_check(TokenKind::LeftBrace)) {
+                braceDepth++;
+                bodyOss << _advance().text << " ";
+            } else if (_check(TokenKind::RightBrace)) {
+                braceDepth--;
+                if (braceDepth > 0) {
+                    bodyOss << _advance().text << " ";
+                } else {
+                    _advance(); // Consume outer closing brace
+                    break;
+                }
+            } else if (_check(TokenKind::StringLiteral)) {
+                bodyOss << "\"" << _advance().text << "\" ";
+            } else {
+                bodyOss << _advance().text << " ";
+            }
+        }
+        route->body = bodyOss.str();
+        _match(TokenKind::Semicolon); // Optional trailing semicolon
+
+        return route;
+    }
+
+    std::shared_ptr<FrontendServerDecl> Parser::_parseFrontend() {
+        SourceLocation loc = _consume(TokenKind::KwFrontend, "Expected 'frontend'").loc;
+        auto fe = std::make_shared<FrontendServerDecl>(loc);
+
+        fe->name = _consume(TokenKind::Identifier, "Expected frontend server variable identifier").text;
+        _consume(TokenKind::LeftParen, "Expected '(' after frontend identifier");
+
+        // Parse arguments: port: <num>, threads: <num>, api: <str>, title: <str>
+        while (!_isAtEnd() && !_check(TokenKind::RightParen)) {
+            std::string key = _consume(TokenKind::Identifier, "Expected argument name in frontend configuration").text;
+            _consume(TokenKind::Colon, "Expected ':' after configuration key");
+            if (key == "port") {
+                fe->port = std::stoi(_consume(TokenKind::NumberLiteral, "Expected port number").text);
+            } else if (key == "threads") {
+                fe->threads = std::stoi(_consume(TokenKind::NumberLiteral, "Expected thread count").text);
+            } else if (key == "api") {
+                fe->apiBaseUrl = _consume(TokenKind::StringLiteral, "Expected API base URL string").text;
+            } else if (key == "title") {
+                fe->pageTitle = _consume(TokenKind::StringLiteral, "Expected page title string").text;
+            } else {
+                _advance(); // Skip unrecognized
+            }
+            if (_check(TokenKind::Comma)) _advance();
+        }
+        _consume(TokenKind::RightParen, "Expected ')' after frontend configuration");
+        _match(TokenKind::Semicolon); // Semicolon optional or expected
+
+        return fe;
     }
 
     std::unique_ptr<ScriptBlock> Parser::_parseScript() {

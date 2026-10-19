@@ -32,6 +32,8 @@ namespace Keety {
         TagTemplateClose, // </template>
         TagStyleOpen, // <style>
         TagStyleClose, // </style>
+        TagServerOpen, // <server>
+        TagServerClose, // </server>
 
         // Structural and XML syntax
         LessThan, // <
@@ -69,6 +71,18 @@ namespace Keety {
         KwFor, // for
         KwIn, // in
 
+        // Server block keywords
+        KwDatabase, // database
+        KwTable, // table
+        KwPrimaryKey, // primary_key
+        KwAutoIncrement, // auto_increment
+        KwBackend, // backend
+        KwFrontend, // frontend
+        KwGet, // get
+        KwPost, // post
+        KwPut, // put
+        KwDelete, // delete
+
         // Literals and identifiers
         Identifier, // Alphanumeric identifier (e.g., count, onClick, title)
         StringLiteral, // Quoted string literal ("..." or '...')
@@ -97,7 +111,12 @@ namespace Keety {
                    kind == TokenKind::KwDef || kind == TokenKind::KwReturn ||
                    kind == TokenKind::KwIf || kind == TokenKind::KwElif ||
                    kind == TokenKind::KwElse || kind == TokenKind::KwFor ||
-                   kind == TokenKind::KwIn;
+                   kind == TokenKind::KwIn || kind == TokenKind::KwDatabase ||
+                   kind == TokenKind::KwTable || kind == TokenKind::KwPrimaryKey ||
+                   kind == TokenKind::KwAutoIncrement || kind == TokenKind::KwBackend ||
+                   kind == TokenKind::KwFrontend || kind == TokenKind::KwGet ||
+                   kind == TokenKind::KwPost || kind == TokenKind::KwPut ||
+                   kind == TokenKind::KwDelete;
         }
 
         [[nodiscard]] static std::string_view kindToString(TokenKind k) { // Human-readable description for debugging and parser error messages
@@ -110,6 +129,8 @@ namespace Keety {
                 case TokenKind::TagTemplateClose: return "</template>";
                 case TokenKind::TagStyleOpen: return "<style>";
                 case TokenKind::TagStyleClose: return "</style>";
+                case TokenKind::TagServerOpen: return "<server>";
+                case TokenKind::TagServerClose: return "</server>";
                 case TokenKind::LessThan: return "<";
                 case TokenKind::GreaterThan: return ">";
                 case TokenKind::SlashGreaterThan: return "/>";
@@ -142,6 +163,16 @@ namespace Keety {
                 case TokenKind::KwElse: return "else";
                 case TokenKind::KwFor: return "for";
                 case TokenKind::KwIn: return "in";
+                case TokenKind::KwDatabase: return "database";
+                case TokenKind::KwTable: return "table";
+                case TokenKind::KwPrimaryKey: return "primary_key";
+                case TokenKind::KwAutoIncrement: return "auto_increment";
+                case TokenKind::KwBackend: return "backend";
+                case TokenKind::KwFrontend: return "frontend";
+                case TokenKind::KwGet: return "get";
+                case TokenKind::KwPost: return "post";
+                case TokenKind::KwPut: return "put";
+                case TokenKind::KwDelete: return "delete";
                 case TokenKind::Identifier: return "identifier";
                 case TokenKind::StringLiteral: return "string literal";
                 case TokenKind::NumberLiteral: return "number literal";

@@ -10,16 +10,21 @@
 
 **KeetScript** (`.keet`) is a declarative Single-File Component (SFC) format designed for Keet. It synthesizes the clean ergonomics of modern UI component systems (such as Svelte and Vue SFCs) with the performance and predictability of standard **C++20**.
 
-A `.keet` file consists of three dedicated, optional top-level sections:
-1. `<script>`: Component state declarations (`state`), local constants (`let`), functions (`def`), and native C++ header imports (`import cpp`).
-2. `<template>`: Declarative HTML markup, reactive expressions (`{expr}`), event handlers (`onClick`), two-way bindings (`bind:*`), and Pythonic control flow (`if:`, `elif:`, `else:`, `for item in items:`).
-3. `<style>`: CSS rules that are automatically scoped to the component instance via Keet's `UIEngine::StyleSheet` and `data-keet-scope` attribute matching.
+A `.keet` file consists of four dedicated, optional top-level sections:
+1. `<server>`: Full-stack infrastructure declarations—embedded SQLite database schemas (`database`, `table`), high-performance backend HTTP microservices (`backend`, `get`, `post`, `put`, `delete`), and frontend web application servers (`frontend`).
+2. `<script>`: Component state declarations (`state`), local constants (`let`), functions (`def`), and native C++ header imports (`import cpp`).
+3. `<template>`: Declarative HTML markup, reactive expressions (`{expr}`), event handlers (`onClick`), two-way bindings (`bind:*`), and Pythonic control flow (`if:`, `elif:`, `else:`, `for item in items:`).
+4. `<style>`: CSS rules that are automatically scoped to the component instance via Keet's `UIEngine::StyleSheet` and `data-keet-scope` attribute matching.
 
-During the CMake build process, `keety` transpiles each `.keet` file into a standard C++20 class derived from `UIEngine::Component`, emitting an optimized `.h` and `.cpp` file with zero runtime overhead.
+During the CMake build process, `keety` transpiles each `.keet` file into either:
+- A standalone C++20 component (`Component.h` & `Component.cpp` derived from `UIEngine::Component`).
+- A complete, self-contained full-stack application binary (`main.cpp` using `keety --app`) initializing the embedded database, backend REST microservice, and frontend web server in concurrent worker threads.
 
 ```text
 +-------------------------------------------------------------+
-|                        Component.keet                       |
+|                        AppOrComponent.keet                  |
+|  +-------------------------------------------------------+  |
+|  | <server>      Database, Backend API, Frontend Server  |  |
 |  +-------------------------------------------------------+  |
 |  | <script>      State, Let, Native C++ Imports, defs    |  |
 |  +-------------------------------------------------------+  |
@@ -32,16 +37,20 @@ During the CMake build process, `keety` transpiles each `.keet` file into a stan
                                | (AOT Transpilation by keety)
                                v
                Component.h & Component.cpp
-           (Standard C++20 UIEngine::Component)
+                     (or App main.cpp)
 ```
 
 ---
 
 ## 2. File Structure & Section Grammar
 
-A `.keet` file may contain at most one of each of the following root sections in any order, though the standard convention is `<script>` $\rightarrow$ `<template>` $\rightarrow$ `<style>`:
+A `.keet` file may contain at most one of each of the following root sections in any order, though the standard convention is `<server>` $\rightarrow$ `<script>` $\rightarrow$ `<template>` $\rightarrow$ `<style>`:
 
 ```keet
+<server>
+  // Database schemas, backend API routes, and frontend server
+</server>
+
 <script>
   // State, variables, logic, and native C++ imports
 </script>
@@ -296,11 +305,76 @@ The `<style>` block specifies CSS rules associated with the component:
 
 ---
 
-## 7. C++20 Code Generation Architecture
+## 7. Section 4: `<server>` Grammar & Semantics (Full-Stack Infrastructure)
+
+The `<server>` block enables declarative Full-Stack Single-File Applications directly in KeetScript, unifying the embedded database, backend REST API services, and frontend web server in a single file without manual C++ orchestration boilerplate.
+
+### 7.1 Embedded Database Declaration (`database`)
+
+Embedded SQLite-backed storage is declared using the `database` keyword:
+```keet
+database <identifier>("<db_file_path>") {
+  table <tableName> {
+    <colName>: <colType> [primary_key] [auto_increment] [default <val>],
+    ...
+  };
+};
+```
+
+- **File Path:** Path to the database file (e.g., `"app_data.db"` or `":memory:"`).
+- **Table Definition:** Specifies table name and schema columns.
+- **Column Attributes:**
+  - `primary_key`: Marks the column as primary key (`PRIMARY KEY`).
+  - `auto_increment`: Enables automatic ID sequence generation (`AUTOINCREMENT`).
+  - `default <expr>`: Sets default column fallback value.
+- **Transpilation Semantics:**
+  - Emits a global or app-scoped `Database::Database` instance.
+  - Automatically executes `CREATE TABLE IF NOT EXISTS` schema migrations during application boot.
+
+### 7.2 Backend REST Microservice (`backend`)
+
+HTTP microservices and REST endpoints are declared with the `backend` keyword:
+```keet
+backend <identifier>(port: <port_number>, threads: <thread_count>) {
+  <http_method> "<route_path>" => (<req>) {
+    // Native C++ handler statements
+  };
+};
+```
+
+- **Parameters:**
+  - `port: <number>`: Port number the microservice listens on (e.g., `8081`).
+  - `threads: <number>`: Worker thread pool size (e.g., `4`).
+- **HTTP Methods:** `get`, `post`, `put`, `delete`.
+- **Handler Signature:** `(<req>) { ... }`, where `req` is typed as `const HTTPServer::Request&`.
+- **Transpilation Semantics:**
+  - Emits `HTTPServer::Server apiServer(port, name, threads);`.
+  - Maps route handlers via `apiServer.route(method, path, [...](const auto& req) { ... });`.
+  - Enables clean database queries inside handlers, such as `return db.table("todos").find();` or `return db.table("todos").insert(req.json());`.
+
+### 7.3 Frontend Web Application Server (`frontend`)
+
+The frontend UI serving infrastructure is declared using the `frontend` keyword:
+```keet
+frontend <identifier>(port: <port_number>, api: "<api_url>", title: "<page_title>");
+```
+
+- **Parameters:**
+  - `port: <number>`: Web server listening port (e.g., `8080`).
+  - `api: "<string>"`: Base URL of the backend REST service used by client components.
+  - `title: "<string>"`: Default HTML document `<title>`.
+- **Transpilation Semantics:**
+  - Emits `HTTPServer::Server webServer(port, name, threads);`.
+  - Mounts `UIEngine::serveApp<RootComponent>(webServer, title);`, serving the compiled Single-File Component reactive DOM, scoped styles, and WebSocket/hydration runtime.
+
+---
+
+## 8. C++20 Code Generation Architecture
 
 Given a component `Counter.keet`, `keety` emits:
 1. `Counter.h`: Class declaration inheriting from `UIEngine::Component`.
 2. `Counter.cpp`: Static interned strings, `render()` definition, event lambdas, and `styles()`.
+3. Standalone App Mode (`keety --app App.keet -o main.cpp`): Emits a complete `main(int argc, char* argv[])` initializing the database, launching backend and frontend servers on concurrent threads, and handling shutdown signals.
 
 ### 7.1 String Interning & Vector Optimization
 
@@ -324,10 +398,22 @@ UIEngine::VNode Counter::render() const {
 
 ---
 
-## 8. Summary of Grammar EBNF (Subset)
+## 9. Summary of Grammar EBNF (Full-Stack SFC)
 
 ```ebnf
-SFCFile         ::= ( ScriptBlock | TemplateBlock | StyleBlock )*
+SFCFile         ::= ServerBlock? ( ScriptBlock | TemplateBlock | StyleBlock )*
+
+ServerBlock     ::= "<server>" ServerItem* "</server>"
+ServerItem      ::= DatabaseDecl | BackendDecl | FrontendDecl
+DatabaseDecl    ::= "database" Identifier "(" StringLiteral ")" "{" TableDecl* "}" ";"?
+TableDecl       ::= "table" Identifier "{" ( TableColumnDecl ( "," TableColumnDecl )* )? "}" ";"?
+TableColumnDecl ::= Identifier ":" TypeName ( "primary_key" )? ( "auto_increment" )? ( "default" Expression )?
+BackendDecl     ::= "backend" Identifier "(" BackendParams ")" "{" RouteDecl* "}" ";"?
+BackendParams   ::= Identifier ":" ( IntegerLiteral | StringLiteral ) ( "," Identifier ":" ( IntegerLiteral | StringLiteral ) )*
+RouteDecl       ::= ( "get" | "post" | "put" | "delete" ) StringLiteral "=>" "(" Identifier ")" "{" Statement* "}" ";"?
+FrontendDecl    ::= "frontend" Identifier "(" FrontendParams ")" ";"?
+FrontendParams  ::= Identifier ":" ( IntegerLiteral | StringLiteral ) ( "," Identifier ":" ( IntegerLiteral | StringLiteral ) )*
+
 ScriptBlock     ::= "<script>" ScriptStatement* "</script>"
 ScriptStatement ::= ImportCppDecl | StateDecl | LetDecl | FunctionDecl
 ImportCppDecl   ::= "import" "cpp" ( "from" StringLiteral "as" Identifier | "{" IdentifierList "}" "from" StringLiteral ) ";"

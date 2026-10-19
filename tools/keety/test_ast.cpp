@@ -8,6 +8,8 @@
 #include "Token.h"
 #include "AST.h"
 #include "ASTPrinter.h"
+#include "Lexer.h"
+#include "Parser.h"
 
 int main() {
     using namespace Keety;
@@ -132,12 +134,60 @@ int main() {
     style->rules.push_back(rule);
     file->styleBlock = std::move(style);
 
+    // Full-stack server block
+    auto server = std::make_unique<ServerBlock>();
+    auto db = std::make_shared<DatabaseDecl>();
+    db->name = "db";
+    db->filePath = "app_data.db";
+    auto usersTable = std::make_shared<TableDecl>();
+    usersTable->name = "users";
+    auto colId = std::make_shared<TableColumnDecl>();
+    colId->name = "id";
+    colId->typeName = "int";
+    colId->isPrimaryKey = true;
+    colId->isAutoIncrement = true;
+    usersTable->columns.push_back(colId);
+    auto colName = std::make_shared<TableColumnDecl>();
+    colName->name = "name";
+    colName->typeName = "string";
+    usersTable->columns.push_back(colName);
+    db->tables.push_back(usersTable);
+    server->database = db;
+
+    auto backend = std::make_shared<BackendServerDecl>();
+    backend->name = "api";
+    backend->port = 8000;
+    backend->threads = 4;
+    auto routeGet = std::make_shared<RouteDecl>();
+    routeGet->method = "GET";
+    routeGet->path = "/api/users";
+    routeGet->paramName = "req";
+    routeGet->body = "return db.table(\"users\").find();";
+    backend->routes.push_back(routeGet);
+    server->backend = backend;
+
+    auto frontend = std::make_shared<FrontendServerDecl>();
+    frontend->name = "web";
+    frontend->port = 8080;
+    frontend->apiBaseUrl = "http://localhost:8000";
+    frontend->pageTitle = "Counter Dashboard App";
+    server->frontend = frontend;
+
+    file->server = std::move(server);
+
     // Test AST Printer
     ASTPrinter printer;
     std::string dump = printer.print(*file);
     std::cout << dump << std::endl;
 
     assert(dump.find("SourceFile: CounterDashboard") != std::string::npos);
+    assert(dump.find("ServerBlock") != std::string::npos);
+    assert(dump.find("Database: db(\"app_data.db\")") != std::string::npos);
+    assert(dump.find("Table: users") != std::string::npos);
+    assert(dump.find("Column: id: int primary_key auto_increment") != std::string::npos);
+    assert(dump.find("BackendServer: api (port: 8000, threads: 4, 1 routes)") != std::string::npos);
+    assert(dump.find("Route: GET \"/api/users\" => (req)") != std::string::npos);
+    assert(dump.find("FrontendServer: web (port: 8080") != std::string::npos);
     assert(dump.find("import cpp from \"services/Analytics.h\" as Analytics") != std::string::npos || dump.find("ImportCpp: \"services/Analytics.h\" as Analytics") != std::string::npos);
     assert(dump.find("bind:value={query}") != std::string::npos);
     assert(dump.find("onClick={() => count += 1}") != std::string::npos);
@@ -145,6 +195,62 @@ int main() {
     assert(dump.find("Else:") != std::string::npos);
     assert(dump.find("padding: 1.5rem;") != std::string::npos);
 
+    // Test Parser on a complete .keet source containing <server>
+    std::string fullSource = R"(
+<server>
+  database db("todos.db") {
+    table todos {
+      id: int primary_key auto_increment,
+      title: string,
+      completed: bool default false
+    };
+  };
+
+  backend api(port: 8081, threads: 4) {
+    get "/api/todos" => (req) {
+      return db.table("todos").find();
+    };
+    post "/api/todos" => (req) {
+      return db.table("todos").insert(req.json());
+    };
+  };
+
+  frontend web(port: 8082, api: "http://localhost:8081", title: "Todos App");
+</server>
+
+<script>
+  state count: int = 0;
+</script>
+
+<template>
+  <div>
+    <h1>Full Stack App</h1>
+  </div>
+</template>
+)";
+
+    Lexer lexer(fullSource, "TestFullStack.keet");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens, "TestFullStack");
+    auto parsedFile = parser.parse();
+
+    assert(parsedFile->server != nullptr);
+    assert(parsedFile->server->database != nullptr);
+    assert(parsedFile->server->database->filePath == "todos.db");
+    assert(parsedFile->server->database->tables.size() == 1);
+    assert(parsedFile->server->database->tables[0]->name == "todos");
+    assert(parsedFile->server->database->tables[0]->columns.size() == 3);
+    assert(parsedFile->server->database->tables[0]->columns[0]->isPrimaryKey);
+    assert(parsedFile->server->backend != nullptr);
+    assert(parsedFile->server->backend->port == 8081);
+    assert(parsedFile->server->backend->routes.size() == 2);
+    assert(parsedFile->server->backend->routes[0]->method == "GET");
+    assert(parsedFile->server->backend->routes[1]->method == "POST");
+    assert(parsedFile->server->frontend != nullptr);
+    assert(parsedFile->server->frontend->port == 8082);
+    assert(parsedFile->server->frontend->pageTitle == "Todos App");
+
+    std::cout << "Parser verification of <server> block passed! 🐱" << std::endl;
     std::cout << "All Phase 1 AST assertions passed successfully! 🐱" << std::endl;
     return 0;
 }
