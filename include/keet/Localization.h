@@ -55,6 +55,7 @@ namespace UIEngine {
             // Utility helpers
             static std::string interpolate(std::string text, const TranslationParams& params); // Replace {param} and {{param}} placeholders in string
             static std::string resolvePluralCategory(const std::string& language, long long count); // Compute plural category (zero, one, few, many, other) for language and count
+            static bool evaluatePluralCondition(const std::string& condition, long long count); // Evaluate dynamic plural logical condition (e.g., "count == 0", "count % 10 in 2..4")
             static std::string normalizeLocale(std::string locale); // Normalize locale string to lowercase with hyphens
             static std::string negotiateLocale(const std::string& acceptLanguageHeader, const std::string& cookieLocale = "", const std::string& defaultLocale = ""); // Negotiate best matching locale from cookie, Accept-Language, and available catalogs
 

@@ -375,6 +375,379 @@ namespace UIEngine {
     }
 
     namespace {
+        enum class ConditionTokenType {
+            End,
+            Number,
+            Var,
+            Eq,
+            Ne,
+            Lt,
+            Lte,
+            Gt,
+            Gte,
+            And,
+            Or,
+            Not,
+            Plus,
+            Minus,
+            Mul,
+            Div,
+            Mod,
+            In,
+            RangeDots,
+            LParen,
+            RParen,
+            Comma,
+            Unknown
+        };
+
+        struct ConditionToken {
+            ConditionTokenType type = ConditionTokenType::End;
+            long long numValue = 0;
+            std::string text;
+        };
+
+        class ConditionLexer {
+        public:
+            explicit ConditionLexer(std::string src) : _src(std::move(src)) {}
+
+            ConditionToken next() {
+                skipWhitespace();
+                if (_pos >= _src.size()) {
+                    return {ConditionTokenType::End, 0, ""};
+                }
+
+                char c = _src[_pos];
+
+                if (c == '(') { _pos++; return {ConditionTokenType::LParen, 0, "("}; }
+                if (c == ')') { _pos++; return {ConditionTokenType::RParen, 0, ")"}; }
+                if (c == ',') { _pos++; return {ConditionTokenType::Comma, 0, ","}; }
+                if (c == '+') { _pos++; return {ConditionTokenType::Plus, 0, "+"}; }
+                if (c == '*') { _pos++; return {ConditionTokenType::Mul, 0, "*"}; }
+                if (c == '/') { _pos++; return {ConditionTokenType::Div, 0, "/"}; }
+                if (c == '%') { _pos++; return {ConditionTokenType::Mod, 0, "%"}; }
+
+                if (c == '.') {
+                    if (_pos + 1 < _src.size() && _src[_pos + 1] == '.') {
+                        _pos += 2;
+                        return {ConditionTokenType::RangeDots, 0, ".."};
+                    }
+                }
+
+                if (c == '&') {
+                    if (_pos + 1 < _src.size() && _src[_pos + 1] == '&') {
+                        _pos += 2;
+                        return {ConditionTokenType::And, 0, "&&"};
+                    }
+                }
+
+                if (c == '|') {
+                    if (_pos + 1 < _src.size() && _src[_pos + 1] == '|') {
+                        _pos += 2;
+                        return {ConditionTokenType::Or, 0, "||"};
+                    }
+                }
+
+                if (c == '!') {
+                    if (_pos + 1 < _src.size() && _src[_pos + 1] == '=') {
+                        _pos += 2;
+                        return {ConditionTokenType::Ne, 0, "!="};
+                    }
+                    _pos++;
+                    return {ConditionTokenType::Not, 0, "!"};
+                }
+
+                if (c == '=') {
+                    if (_pos + 1 < _src.size() && _src[_pos + 1] == '=') {
+                        _pos += 2;
+                        return {ConditionTokenType::Eq, 0, "=="};
+                    }
+                    _pos++;
+                    return {ConditionTokenType::Eq, 0, "="};
+                }
+
+                if (c == '<') {
+                    if (_pos + 1 < _src.size() && _src[_pos + 1] == '=') {
+                        _pos += 2;
+                        return {ConditionTokenType::Lte, 0, "<="};
+                    }
+                    _pos++;
+                    return {ConditionTokenType::Lt, 0, "<"};
+                }
+
+                if (c == '>') {
+                    if (_pos + 1 < _src.size() && _src[_pos + 1] == '=') {
+                        _pos += 2;
+                        return {ConditionTokenType::Gte, 0, ">="};
+                    }
+                    _pos++;
+                    return {ConditionTokenType::Gt, 0, ">"};
+                }
+
+                if (c == '-') {
+                    _pos++;
+                    return {ConditionTokenType::Minus, 0, "-"};
+                }
+
+                if (std::isdigit(static_cast<unsigned char>(c))) {
+                    size_t start = _pos;
+                    while (_pos < _src.size() && std::isdigit(static_cast<unsigned char>(_src[_pos]))) {
+                        _pos++;
+                    }
+                    std::string s = _src.substr(start, _pos - start);
+                    long long val = 0;
+                    try {
+                        val = std::stoll(s);
+                    } catch (...) {
+                        val = 0;
+                    }
+                    return {ConditionTokenType::Number, val, s};
+                }
+
+                if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+                    size_t start = _pos;
+                    while (_pos < _src.size() && (std::isalnum(static_cast<unsigned char>(_src[_pos])) || _src[_pos] == '_')) {
+                        _pos++;
+                    }
+                    std::string s = _src.substr(start, _pos - start);
+                    std::string lower = s;
+                    for (char& ch : lower) {
+                        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                    }
+
+                    if (lower == "and") return {ConditionTokenType::And, 0, s};
+                    if (lower == "or") return {ConditionTokenType::Or, 0, s};
+                    if (lower == "not") return {ConditionTokenType::Not, 0, s};
+                    if (lower == "mod") return {ConditionTokenType::Mod, 0, s};
+                    if (lower == "in") return {ConditionTokenType::In, 0, s};
+                    if (lower == "count" || lower == "n" || lower == "c") return {ConditionTokenType::Var, 0, s};
+
+                    return {ConditionTokenType::Unknown, 0, s};
+                }
+
+                _pos++;
+                return {ConditionTokenType::Unknown, 0, ""};
+            }
+
+        private:
+            void skipWhitespace() {
+                while (_pos < _src.size() && std::isspace(static_cast<unsigned char>(_src[_pos]))) {
+                    _pos++;
+                }
+            }
+
+            std::string _src;
+            size_t _pos = 0;
+        };
+
+        class ConditionParser {
+        public:
+            ConditionParser(std::string src, long long countVal) : _lexer(std::move(src)), _countVal(countVal) {
+                advance();
+            }
+
+            bool parseCondition(bool& success) {
+                success = true;
+                long long res = parseOr();
+                if (_cur.type != ConditionTokenType::End) {
+                    success = false;
+                    return false;
+                }
+                return res != 0;
+            }
+
+        private:
+            void advance() {
+                _cur = _lexer.next();
+            }
+
+            long long parseOr() {
+                long long left = parseAnd();
+                while (_cur.type == ConditionTokenType::Or) {
+                    advance();
+                    long long right = parseAnd();
+                    left = (left != 0 || right != 0) ? 1 : 0;
+                }
+                return left;
+            }
+
+            long long parseAnd() {
+                long long left = parseEquality();
+                while (_cur.type == ConditionTokenType::And) {
+                    advance();
+                    long long right = parseEquality();
+                    left = (left != 0 && right != 0) ? 1 : 0;
+                }
+                return left;
+            }
+
+            long long parseEquality() {
+                long long left = parseRelational();
+                while (_cur.type == ConditionTokenType::Eq || _cur.type == ConditionTokenType::Ne) {
+                    ConditionTokenType op = _cur.type;
+                    advance();
+                    long long right = parseRelational();
+                    if (op == ConditionTokenType::Eq) {
+                        left = (left == right) ? 1 : 0;
+                    } else {
+                        left = (left != right) ? 1 : 0;
+                    }
+                }
+                return left;
+            }
+
+            long long parseRelational() {
+                long long left = parseAdditive();
+                if (_cur.type == ConditionTokenType::In) {
+                    advance();
+                    return parseInList(left);
+                }
+                while (_cur.type == ConditionTokenType::Lt || _cur.type == ConditionTokenType::Lte ||
+                       _cur.type == ConditionTokenType::Gt || _cur.type == ConditionTokenType::Gte) {
+                    ConditionTokenType op = _cur.type;
+                    advance();
+                    long long right = parseAdditive();
+                    if (op == ConditionTokenType::Lt) left = (left < right) ? 1 : 0;
+                    else if (op == ConditionTokenType::Lte) left = (left <= right) ? 1 : 0;
+                    else if (op == ConditionTokenType::Gt) left = (left > right) ? 1 : 0;
+                    else if (op == ConditionTokenType::Gte) left = (left >= right) ? 1 : 0;
+                }
+                return left;
+            }
+
+            long long parseInList(long long val) {
+                bool matched = false;
+                while (true) {
+                    long long rangeStart = parseAdditive();
+                    if (_cur.type == ConditionTokenType::RangeDots) {
+                        advance();
+                        long long rangeEnd = parseAdditive();
+                        if (val >= rangeStart && val <= rangeEnd) {
+                            matched = true;
+                        }
+                    } else {
+                        if (val == rangeStart) {
+                            matched = true;
+                        }
+                    }
+                    if (_cur.type == ConditionTokenType::Comma) {
+                        advance();
+                    } else {
+                        break;
+                    }
+                }
+                return matched ? 1 : 0;
+            }
+
+            long long parseAdditive() {
+                long long left = parseMultiplicative();
+                while (_cur.type == ConditionTokenType::Plus || _cur.type == ConditionTokenType::Minus) {
+                    ConditionTokenType op = _cur.type;
+                    advance();
+                    long long right = parseMultiplicative();
+                    if (op == ConditionTokenType::Plus) left += right;
+                    else left -= right;
+                }
+                return left;
+            }
+
+            long long parseMultiplicative() {
+                long long left = parseUnary();
+                while (_cur.type == ConditionTokenType::Mul || _cur.type == ConditionTokenType::Div || _cur.type == ConditionTokenType::Mod) {
+                    ConditionTokenType op = _cur.type;
+                    advance();
+                    long long right = parseUnary();
+                    if (op == ConditionTokenType::Mul) left *= right;
+                    else if (op == ConditionTokenType::Div) left = (right != 0) ? (left / right) : 0;
+                    else if (op == ConditionTokenType::Mod) {
+                        if (right != 0) {
+                            left = std::abs(left) % std::abs(right);
+                        } else {
+                            left = 0;
+                        }
+                    }
+                }
+                return left;
+            }
+
+            long long parseUnary() {
+                if (_cur.type == ConditionTokenType::Not) {
+                    advance();
+                    return parseUnary() == 0 ? 1 : 0;
+                }
+                if (_cur.type == ConditionTokenType::Minus) {
+                    advance();
+                    return -parseUnary();
+                }
+                if (_cur.type == ConditionTokenType::Plus) {
+                    advance();
+                    return parseUnary();
+                }
+                return parsePrimary();
+            }
+
+            long long parsePrimary() {
+                if (_cur.type == ConditionTokenType::LParen) {
+                    advance();
+                    long long val = parseOr();
+                    if (_cur.type == ConditionTokenType::RParen) {
+                        advance();
+                    }
+                    return val;
+                }
+                if (_cur.type == ConditionTokenType::Number) {
+                    long long val = _cur.numValue;
+                    advance();
+                    return val;
+                }
+                if (_cur.type == ConditionTokenType::Var) {
+                    advance();
+                    return _countVal;
+                }
+                return 0;
+            }
+
+            ConditionLexer _lexer;
+            long long _countVal;
+            ConditionToken _cur;
+        };
+
+        std::string preprocessCondition(std::string cond) {
+            size_t f = cond.find_first_not_of(" \t");
+            size_t l = cond.find_last_not_of(" \t");
+            if (f == std::string::npos || l == std::string::npos) return "";
+            cond = cond.substr(f, l - f + 1);
+
+            // Shorthands like "=0", "== 0", "> 5", "<= 2"
+            if (cond.rfind("==", 0) == 0 || cond.rfind("!=", 0) == 0 ||
+                cond.rfind("<=", 0) == 0 || cond.rfind(">=", 0) == 0 ||
+                cond.rfind("<", 0) == 0 || cond.rfind(">", 0) == 0 ||
+                cond.rfind("=", 0) == 0) {
+                return "count " + cond;
+            }
+
+            // Shorthand range like "2..4"
+            if (cond.find("..") != std::string::npos && cond.find("count") == std::string::npos && cond.find("n") == std::string::npos) {
+                return "count in " + cond;
+            }
+
+            // Pure integer literal like "0", "1", "42"
+            bool isNumber = true;
+            size_t idx = (cond[0] == '-' || cond[0] == '+') ? 1 : 0;
+            if (idx >= cond.size()) isNumber = false;
+            for (; idx < cond.size(); ++idx) {
+                if (!std::isdigit(static_cast<unsigned char>(cond[idx]))) {
+                    isNumber = false;
+                    break;
+                }
+            }
+            if (isNumber) {
+                return "count == " + cond;
+            }
+
+            return cond;
+        }
+
         std::string extractStringOrFallback(const HTTPServer::Json* node, const std::string& fallback) {
             if (!node) {
                 return fallback;
@@ -398,14 +771,49 @@ namespace UIEngine {
             if (node->isString()) {
                 return node->asString();
             }
+            if (node->isArray()) {
+                for (const auto& item : node->asArray()) {
+                    if (item.isObject()) {
+                        const auto& itemObj = item.asObject();
+                        if (itemObj.contains("if") && itemObj.at("if").isString()) {
+                            if (Localization::evaluatePluralCondition(itemObj.at("if").asString(), count)) {
+                                if (itemObj.contains("then") && itemObj.at("then").isString()) {
+                                    return itemObj.at("then").asString();
+                                }
+                                if (itemObj.contains("text") && itemObj.at("text").isString()) {
+                                    return itemObj.at("text").asString();
+                                }
+                                if (itemObj.contains("value") && itemObj.at("value").isString()) {
+                                    return itemObj.at("value").asString();
+                                }
+                            }
+                        } else if (itemObj.contains("else") && itemObj.at("else").isString()) {
+                            return itemObj.at("else").asString();
+                        }
+                    }
+                }
+                return fallbackKey;
+            }
             if (!node->isObject()) {
                 return extractStringOrFallback(node, fallbackKey);
             }
 
             const auto& obj = node->asObject();
-            const std::string category = Localization::resolvePluralCategory(lang, count);
 
-            // Attempt exact category
+            // 1. Evaluate explicit logical conditions first (skip default/fallback keywords)
+            for (const auto& [condKey, val] : obj) {
+                if (!val.isString()) continue;
+                if (condKey == "other" || condKey == "default" || condKey == "*" ||
+                    condKey == "zero" || condKey == "one" || condKey == "few" || condKey == "many") {
+                    continue;
+                }
+                if (Localization::evaluatePluralCondition(condKey, count)) {
+                    return val.asString();
+                }
+            }
+
+            // 2. Exact CLDR category match
+            const std::string category = Localization::resolvePluralCategory(lang, count);
             auto it = obj.find(category);
             if (it != obj.end() && it->second.isString()) {
                 return it->second.asString();
@@ -419,21 +827,36 @@ namespace UIEngine {
                 }
             }
 
-            // Standard fallbacks
-            for (const char* fallbackCat : {"other", "many", "few", "one"}) {
+            // 3. Fallbacks
+            for (const char* fallbackCat : {"other", "default", "*", "many", "few", "one"}) {
                 it = obj.find(fallbackCat);
                 if (it != obj.end() && it->second.isString()) {
                     return it->second.asString();
                 }
             }
 
-            // First available string
+            // 4. First available string
             for (const auto& [_, val] : obj) {
                 if (val.isString()) {
                     return val.asString();
                 }
             }
             return fallbackKey;
+        }
+    }
+
+    bool Localization::evaluatePluralCondition(const std::string& condition, long long count) {
+        std::string processed = preprocessCondition(condition);
+        if (processed.empty()) {
+            return false;
+        }
+        try {
+            ConditionParser parser(processed, count);
+            bool success = false;
+            bool result = parser.parseCondition(success);
+            return success && result;
+        } catch (...) {
+            return false;
         }
     }
 
