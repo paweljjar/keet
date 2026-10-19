@@ -80,28 +80,28 @@ namespace UIEngine {
         }
 
         std::string normalizeEventAttr(const std::string& propName) { // Map C++ event prop names (e.g., "onClick") to DOM data attributes (e.g., "data-on-click")
-            if (propName == "onClick" || propName == "onclick" || propName == "data-on-click") {
+            if (propName == "onClick" || propName == "onclick" || propName == "click" || propName == "data-on-click") {
                 return "data-on-click";
             }
-            if (propName == "onSubmit" || propName == "onsubmit" || propName == "data-on-submit") {
+            if (propName == "onSubmit" || propName == "onsubmit" || propName == "submit" || propName == "data-on-submit") {
                 return "data-on-submit";
             }
-            if (propName == "onInput" || propName == "oninput" || propName == "data-on-input") {
+            if (propName == "onInput" || propName == "oninput" || propName == "input" || propName == "data-on-input") {
                 return "data-on-input";
             }
-            if (propName == "onChange" || propName == "onchange" || propName == "data-on-change") {
+            if (propName == "onChange" || propName == "onchange" || propName == "change" || propName == "data-on-change") {
                 return "data-on-change";
             }
-            if (propName == "onKeyDown" || propName == "onkeydown" || propName == "data-on-keydown") {
+            if (propName == "onKeyDown" || propName == "onkeydown" || propName == "keydown" || propName == "data-on-keydown") {
                 return "data-on-keydown";
             }
-            if (propName == "onKeyUp" || propName == "onkeyup" || propName == "data-on-keyup") {
+            if (propName == "onKeyUp" || propName == "onkeyup" || propName == "keyup" || propName == "data-on-keyup") {
                 return "data-on-keyup";
             }
-            if (propName == "onFocus" || propName == "onfocus" || propName == "data-on-focus") {
+            if (propName == "onFocus" || propName == "onfocus" || propName == "focus" || propName == "data-on-focus") {
                 return "data-on-focus";
             }
-            if (propName == "onBlur" || propName == "onblur" || propName == "data-on-blur") {
+            if (propName == "onBlur" || propName == "onblur" || propName == "blur" || propName == "data-on-blur") {
                 return "data-on-blur";
             }
             return propName;
@@ -1302,12 +1302,13 @@ namespace UIEngine {
             if (triggerEl && triggerEl.nodeType === 1) {
                 triggerEl.classList.add("keet-pending");
                 triggerEl.setAttribute("data-loading", "true");
-                if ("disabled" in triggerEl) {
+                const isBtn = triggerEl.tagName === "BUTTON" || triggerEl.type === "submit";
+                if (isBtn && "disabled" in triggerEl) {
                     hadDisabledProp = true;
                     origDisabled = triggerEl.disabled;
                     triggerEl.disabled = true;
                 }
-                const loadingText = triggerEl.getAttribute("data-loading-text");
+                const loadingText = isBtn ? triggerEl.getAttribute("data-loading-text") : null;
                 if (loadingText !== null && loadingText !== "") {
                     origText = triggerEl.textContent;
                     triggerEl.textContent = loadingText;
@@ -1382,12 +1383,14 @@ namespace UIEngine {
                     const lower = key.toLowerCase();
                     if (key === "data-on-click") el.onclick = null;
                     else if (key === "data-on-submit") el.onsubmit = null;
-                    else if (key === "data-on-input") el.oninput = null;
-                    else if (key === "data-on-change") el.onchange = null;
-                    else if (key === "data-on-keydown") el.onkeydown = null;
-                    else if (key === "data-on-keyup") el.onkeyup = null;
-                    else if (key === "data-on-focus") el.onfocus = null;
-                    else if (key === "data-on-blur") el.onblur = null;
+                    if (key === "data-on-click" || key === "onClick" || key === "onclick" || key === "click") el.onclick = null;
+                    else if (key === "data-on-submit" || key === "onSubmit" || key === "onsubmit" || key === "submit") el.onsubmit = null;
+                    else if (key === "data-on-input" || key === "onInput" || key === "oninput" || key === "input") el.oninput = null;
+                    else if (key === "data-on-change" || key === "onChange" || key === "onchange" || key === "change") el.onchange = null;
+                    else if (key === "data-on-keydown" || key === "onKeyDown" || key === "onkeydown" || key === "keydown") el.onkeydown = null;
+                    else if (key === "data-on-keyup" || key === "onKeyUp" || key === "onkeyup" || key === "keyup") el.onkeyup = null;
+                    else if (key === "data-on-focus" || key === "onFocus" || key === "onfocus" || key === "focus") el.onfocus = null;
+                    else if (key === "data-on-blur" || key === "onBlur" || key === "onblur" || key === "blur") el.onblur = null;
                     else if (key.startsWith("class:")) {
                         el.classList.remove(key.slice(6));
                     }
@@ -1403,7 +1406,7 @@ namespace UIEngine {
             }
             for (const [key, value] of Object.entries(newProps)) {
                 if (oldProps[key] === value) continue;
-                if (key === "data-on-submit") {
+                if (key === "data-on-submit" || key === "onSubmit" || key === "onsubmit" || key === "submit") {
                     el.onsubmit = async (e) => {
                         e.preventDefault();
                         const form = {};
@@ -1415,7 +1418,7 @@ namespace UIEngine {
                         await dispatchEvent(value, { type: "submit", form }, submitter);
                         el.reset();
                     };
-                } else if (key === "data-on-click") {
+                } else if (key === "data-on-click" || key === "onClick" || key === "onclick" || key === "click") {
                     el.onclick = async (e) => {
                         const isLink = el.getAttribute("data-link") === "true" || newProps["data-link"] === "true";
                         if (isLink) {
@@ -1438,7 +1441,7 @@ namespace UIEngine {
                             metaKey: Boolean(e.metaKey)
                         }, el);
                     };
-                } else if (key === "data-on-input") {
+                } else if (key === "data-on-input" || key === "onInput" || key === "oninput" || key === "input") {
                     el.oninput = async (e) => {
                         await dispatchEvent(value, {
                             type: "input",
@@ -1446,7 +1449,7 @@ namespace UIEngine {
                             checked: Boolean(e.target && "checked" in e.target ? e.target.checked : el.checked)
                         }, el);
                     };
-                } else if (key === "data-on-change") {
+                } else if (key === "data-on-change" || key === "onChange" || key === "onchange" || key === "change") {
                     el.onchange = async (e) => {
                         await dispatchEvent(value, {
                             type: "change",
@@ -1454,7 +1457,7 @@ namespace UIEngine {
                             checked: Boolean(e.target && "checked" in e.target ? e.target.checked : el.checked)
                         }, el);
                     };
-                } else if (key === "data-on-keydown") {
+                } else if (key === "data-on-keydown" || key === "onKeyDown" || key === "onkeydown" || key === "keydown") {
                     el.onkeydown = async (e) => {
                         await dispatchEvent(value, {
                             type: "keydown",
@@ -1468,7 +1471,7 @@ namespace UIEngine {
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
                         }, el);
                     };
-                } else if (key === "data-on-keyup") {
+                } else if (key === "data-on-keyup" || key === "onKeyUp" || key === "onkeyup" || key === "keyup") {
                     el.onkeyup = async (e) => {
                         await dispatchEvent(value, {
                             type: "keyup",
@@ -1482,14 +1485,14 @@ namespace UIEngine {
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
                         }, el);
                     };
-                } else if (key === "data-on-focus") {
+                } else if (key === "data-on-focus" || key === "onFocus" || key === "onfocus" || key === "focus") {
                     el.onfocus = async (e) => {
                         await dispatchEvent(value, {
                             type: "focus",
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
                         }, el);
                     };
-                } else if (key === "data-on-blur") {
+                } else if (key === "data-on-blur" || key === "onBlur" || key === "onblur" || key === "blur") {
                     el.onblur = async (e) => {
                         await dispatchEvent(value, {
                             type: "blur",
@@ -1504,7 +1507,7 @@ namespace UIEngine {
                     } else {
                         el.classList.remove(className);
                     }
-                } else if (!key.startsWith("data-on-")) {
+                } else if (!key.startsWith("data-on-") && key !== "click" && key !== "onClick" && key !== "onclick" && key !== "input" && key !== "onInput" && key !== "oninput" && key !== "change" && key !== "onChange" && key !== "onchange" && key !== "submit" && key !== "onSubmit" && key !== "onsubmit" && key !== "keydown" && key !== "onKeyDown" && key !== "onkeydown" && key !== "keyup" && key !== "onKeyUp" && key !== "onkeyup" && key !== "focus" && key !== "onFocus" && key !== "onfocus" && key !== "blur" && key !== "onBlur" && key !== "onblur") {
                     const lower = key.toLowerCase();
                     const isBoolProp = BOOLEAN_PROPS.has(lower) || typeof value === "boolean";
                     if (isBoolProp) {
@@ -1520,9 +1523,17 @@ namespace UIEngine {
                         }
                     } else {
                         if (key === "value" && "value" in el) {
-                            el.value = value;
+                            if (el.value !== value) {
+                                const start = el.selectionStart;
+                                const end = el.selectionEnd;
+                                el.value = value;
+                                if (start !== null && end !== null && document.activeElement === el) {
+                                    try { el.setSelectionRange(start, end); } catch (_) {}
+                                }
+                            }
+                        } else {
+                            el.setAttribute(key, value);
                         }
-                        el.setAttribute(key, value);
                     }
                 }
             }

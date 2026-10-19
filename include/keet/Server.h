@@ -35,6 +35,10 @@ namespace HTTPServer {
         [[nodiscard]] std::string getQuery(const std::string& key, const std::string& fallback = "") const; // Retrieve a query parameter value, returning fallback if not found
         [[nodiscard]] std::string getHeader(const std::string& key, const std::string& fallback = "") const; // Retrieve a request header value (case-insensitive), returning fallback if not found
         [[nodiscard]] std::string getCookie(const std::string& name, const std::string& fallback = "") const; // Retrieve a cookie value by name from the Cookie header, returning fallback if not found
+        [[nodiscard]] Json json() const { // Parse incoming request body as JSON
+            if (body.empty()) return Json::Object{};
+            return Json::parse(body);
+        }
     };
 
     struct ServerResponse { // Represents an outgoing HTTP response containing status code, response body, and content type
@@ -62,6 +66,9 @@ namespace HTTPServer {
             void stop(); // Stop the server accept loop and shutdown worker thread pool
             void get(const std::string& path, RequestHandler handler); // Register a route handler callback for HTTP GET requests at the given path
             void post(const std::string& path, RequestHandler handler); // Register a route handler callback for HTTP POST requests at the given path
+            void put(const std::string& path, RequestHandler handler); // Register a route handler callback for HTTP PUT requests at the given path
+            void del(const std::string& path, RequestHandler handler); // Register a route handler callback for HTTP DELETE requests at the given path
+            void route(const std::string& method, const std::string& path, RequestHandler handler); // Register a route handler callback for arbitrary HTTP method at the given path
             void setFallbackGetHandler(RequestHandler handler); // Register a fallback handler for unmatched HTTP GET requests (e.g. SPA client-side routes)
             int getPort() const; // Return the configured port number the server listens on
             const std::string& getName() const; // Return the configured name of the server

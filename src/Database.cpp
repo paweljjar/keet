@@ -546,4 +546,31 @@ namespace HTTPServer {
         file << Json(_data).dump(4); // Write formatted JSON string with 4-space indentation to file
         file.close(); // Close the output file stream after writing
     }
+
+    TableProxy Database::table(std::string tableName) { // Return a fluent TableProxy for the specified table
+        return TableProxy(*this, std::move(tableName));
+    }
+
+    TableProxy::TableProxy(Database& db, std::string tableName) // Constructor initializing reference to database and target table name
+        : _db(db), _table(std::move(tableName)) {}
+
+    Json::Array TableProxy::select(const Json::Object& where) const { // Query records matching criteria from the table
+        return _db.select(_table, where);
+    }
+
+    Json::Array TableProxy::find(const Json::Object& where) const { // Alias for select matching criteria
+        return _db.select(_table, where);
+    }
+
+    Json::Object TableProxy::insert(const Json::Object& record) { // Insert record into the table
+        return _db.insert(_table, record);
+    }
+
+    Json::Array TableProxy::update(const Json::Object& updates, const Json::Object& where) { // Update matching records in the table
+        return _db.update(_table, updates, where);
+    }
+
+    Json::Array TableProxy::remove(const Json::Object& where) { // Remove matching records from the table
+        return _db.remove(_table, where);
+    }
 } // HTTPServer

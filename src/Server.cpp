@@ -174,6 +174,9 @@ namespace HTTPServer {
 
     void Server::get(const std::string& path, RequestHandler handler)  { _addRoute("GET",  path, std::move(handler)); } // Register a GET route with the specified path and handler function, moving the handler to avoid unnecessary copies
     void Server::post(const std::string& path, RequestHandler handler) { _addRoute("POST", path, std::move(handler)); } // Register a POST route with the specified path and handler function, moving the handler to avoid unnecessary copies
+    void Server::put(const std::string& path, RequestHandler handler)  { _addRoute("PUT",  path, std::move(handler)); } // Register a PUT route with the specified path and handler function, moving the handler to avoid unnecessary copies
+    void Server::del(const std::string& path, RequestHandler handler)  { _addRoute("DELETE", path, std::move(handler)); } // Register a DELETE route with the specified path and handler function, moving the handler to avoid unnecessary copies
+    void Server::route(const std::string& method, const std::string& path, RequestHandler handler) { _addRoute(method, path, std::move(handler)); } // Register an arbitrary HTTP method route with the specified path and handler function
 
     void Server::setFallbackGetHandler(RequestHandler handler) { // Register a fallback handler for unmatched HTTP GET requests
         _fallbackGetHandler = std::move(handler);

@@ -216,6 +216,10 @@ namespace UIEngine {
             operator const T&() const { return get(); } // Implicitly convert the state handle to a const reference of its underlying value
             const State& operator=(T newValue) const { set(std::move(newValue)); return *this; } // Assign a new value to the state slot
 
+            friend std::ostream& operator<<(std::ostream& os, const State& s) { // Stream insertion operator reading current reactive state value
+                return os << s.get();
+            }
+
         private:
             std::string _key; // Unique identifier key for this state slot in the persistent state store
             T _initialValue; // Initial value stored to lazily initialize per-session state slots
