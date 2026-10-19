@@ -3,6 +3,7 @@
 //
 
 #include "keet/StaticFiles.h"
+#include "keet/Server.h"
 #include "keet/Crypto.h"
 
 #include <algorithm>

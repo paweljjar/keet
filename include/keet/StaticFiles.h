@@ -5,7 +5,6 @@
 #ifndef LORIKEET_STATICFILES_H
 #define LORIKEET_STATICFILES_H
 
-#include "Server.h"
 #include <chrono>
 #include <filesystem>
 #include <map>
@@ -13,6 +12,11 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace HTTPServer {
+    struct ServerRequest;
+    struct ServerResponse;
+}
 
 namespace keet::StaticFiles {
 

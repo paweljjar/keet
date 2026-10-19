@@ -7,6 +7,7 @@
 #include "keet/Crypto.h"
 
 #include <algorithm>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <random>
@@ -237,6 +238,30 @@ namespace HTTPServer {
     void Server::setFallbackGetHandler(RequestHandler handler) { // Register a fallback handler for unmatched HTTP GET requests
         _fallbackGetHandler = std::move(handler);
         _log("Registered fallback GET handler");
+    }
+
+    Server& Server::serveStatic(const std::string& mountPrefix, const std::string& directoryPath, keet::StaticFiles::StaticOptions options) { // Mount a filesystem directory under a URL path prefix for static asset delivery
+        std::error_code ec;
+        std::filesystem::path canonicalDir = std::filesystem::canonical(directoryPath, ec);
+        if (ec) {
+            canonicalDir = std::filesystem::weakly_canonical(directoryPath, ec);
+        }
+
+        std::string prefix = mountPrefix;
+        if (!prefix.starts_with('/')) {
+            prefix = "/" + prefix;
+        }
+        while (prefix.size() > 1 && prefix.ends_with('/')) {
+            prefix.pop_back();
+        }
+
+        _staticMounts.push_back(StaticMount{
+            .mountPrefix = std::move(prefix),
+            .rootDirectory = std::move(canonicalDir),
+            .options = std::move(options)
+        });
+        _log("Mounted static directory: " + mountPrefix + " -> " + directoryPath);
+        return *this;
     }
 
     int Server::getPort() const { // Return the port number that the server is listening on
@@ -1014,6 +1039,66 @@ namespace HTTPServer {
         sendJson(res, status, Json::Object{{"error", _getStatusMessage(status)}}); // Serialize a JSON object with an "error" key set to the status message and populate the response
     }
 
+    void Server::_serveFile(const std::filesystem::path& target, const ServerRequest& request, ServerResponse& response, const keet::StaticFiles::StaticOptions& options) { // Read and transmit a static file with caching and MIME detection
+        std::error_code ec;
+        const size_t fileSize = std::filesystem::file_size(target, ec);
+        if (ec) {
+            _setError(response, HTTP_NOT_FOUND);
+            return;
+        }
+
+        const auto ftime = std::filesystem::last_write_time(target, ec);
+        const auto mtime = ec ? std::chrono::system_clock::time_point{} : keet::StaticFiles::toSystemTime(ftime);
+
+        const std::string etag = options.enableETag ? keet::StaticFiles::generateETag(fileSize, mtime) : "";
+        const std::string cacheControl = keet::StaticFiles::formatCacheControl(options.maxAge, true, options.isImmutable);
+
+        if (keet::StaticFiles::isNotModified(request, etag, mtime)) {
+            keet::StaticFiles::applyNotModified(response, etag, mtime, cacheControl);
+            for (const auto& [k, v] : options.customHeaders) {
+                response.setHeader(k, v);
+            }
+            return;
+        }
+
+        std::ifstream file(target, std::ios::binary);
+        if (!file.is_open()) {
+            _setError(response, HTTP_NOT_FOUND);
+            return;
+        }
+
+        std::string buffer;
+        buffer.resize(fileSize);
+        file.read(buffer.data(), static_cast<std::streamsize>(fileSize));
+        const size_t bytesRead = static_cast<size_t>(file.gcount());
+        if (bytesRead < fileSize) {
+            buffer.resize(bytesRead);
+        }
+
+        response.status = HTTP_OK;
+        const std::string mime = keet::StaticFiles::getMimeType(target.extension().string());
+        response.contentType = mime;
+        if (keet::StaticFiles::isTextMimeType(mime)) {
+            response.charset = "utf-8";
+        }
+        if (options.enableETag && !etag.empty()) {
+            response.setHeader("ETag", etag);
+        }
+        if (options.enableLastModified && mtime != std::chrono::system_clock::time_point{}) {
+            response.setHeader("Last-Modified", keet::StaticFiles::formatHttpDate(mtime));
+        }
+        response.setHeader("Cache-Control", cacheControl);
+        for (const auto& [k, v] : options.customHeaders) {
+            response.setHeader(k, v);
+        }
+
+        if (request.method == "HEAD") {
+            response.body = "";
+        } else {
+            response.body = std::move(buffer);
+        }
+    }
+
     void Server::_dispatch(ServerRequest& request, ServerResponse& response) { // Route the incoming request through middleware pipeline and to the appropriate registered handler
         for (const auto& middleware : _middlewares) {
             if (!middleware) continue;
@@ -1049,6 +1134,77 @@ namespace HTTPServer {
                     _setError(response, HTTP_INTERNAL_SERVER_ERROR); // Set the response to HTTP 500 (Internal Server Error) to notify the client of the failure
                 }
                 return; // Return after the route handler has finished executing
+            }
+        }
+
+        // Static file serving for GET and HEAD requests
+        if (request.method == "GET" || request.method == "HEAD") {
+            for (const auto& mount : _staticMounts) {
+                bool matches = false;
+                std::string subPath;
+
+                if (mount.mountPrefix == "/") {
+                    matches = true;
+                    subPath = request.path.starts_with('/') ? request.path.substr(1) : request.path;
+                    if (subPath.empty()) subPath = mount.options.defaultFile;
+                } else if (request.path == mount.mountPrefix || request.path == mount.mountPrefix + "/") {
+                    matches = true;
+                    subPath = mount.options.defaultFile;
+                } else if (request.path.starts_with(mount.mountPrefix + "/")) {
+                    matches = true;
+                    subPath = request.path.substr(mount.mountPrefix.size() + 1);
+                }
+
+                if (matches) {
+                    subPath = _urlDecode(subPath);
+
+                    // Path traversal protection
+                    std::filesystem::path relPath(subPath);
+                    bool hasTraversal = false;
+                    for (const auto& part : relPath) {
+                        if (part == "..") {
+                            hasTraversal = true;
+                            break;
+                        }
+                    }
+                    if (hasTraversal) {
+                        _setError(response, 403);
+                        return;
+                    }
+
+                    std::filesystem::path target = mount.rootDirectory / relPath;
+                    std::error_code ec;
+                    auto canonicalTarget = std::filesystem::weakly_canonical(target, ec);
+                    if (!ec && std::filesystem::is_directory(canonicalTarget)) {
+                        canonicalTarget = std::filesystem::weakly_canonical(canonicalTarget / mount.options.defaultFile, ec);
+                    }
+
+                    if (!ec && std::filesystem::exists(canonicalTarget) && std::filesystem::is_regular_file(canonicalTarget)) {
+                        auto rel = canonicalTarget.lexically_relative(mount.rootDirectory);
+                        if (rel.empty() || rel.string().starts_with("..")) {
+                            _setError(response, 403);
+                            return;
+                        }
+
+                        if (!mount.options.allowHiddenFiles) {
+                            bool isHidden = false;
+                            for (const auto& part : rel) {
+                                std::string s = part.string();
+                                if (s.size() > 1 && s.starts_with('.')) {
+                                    isHidden = true;
+                                    break;
+                                }
+                            }
+                            if (isHidden) {
+                                _setError(response, 403);
+                                return;
+                            }
+                        }
+
+                        _serveFile(canonicalTarget, request, response, mount.options);
+                        return;
+                    }
+                }
             }
         }
 

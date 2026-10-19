@@ -13,10 +13,12 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+#include <filesystem>
 #include <netinet/in.h>
 
 #include "Json.h"
 #include "WebSocket.h"
+#include "StaticFiles.h"
 
 namespace HTTPServer {
 #define HTTP_INTERNAL_SERVER_ERROR 500 // HTTP status code 500: Server encountered an unexpected condition preventing it from fulfilling the request
@@ -93,6 +95,7 @@ namespace HTTPServer {
             void put(const std::string& path, RequestHandler handler); // Register a route handler callback for HTTP PUT requests at the given path
             void del(const std::string& path, RequestHandler handler); // Register a route handler callback for HTTP DELETE requests at the given path
             void route(const std::string& method, const std::string& path, RequestHandler handler); // Register a route handler callback for arbitrary HTTP method at the given path
+            Server& serveStatic(const std::string& mountPrefix, const std::string& directoryPath, keet::StaticFiles::StaticOptions options = {}); // Mount a filesystem directory under a URL path prefix for static asset delivery
             void setFallbackGetHandler(RequestHandler handler); // Register a fallback handler for unmatched HTTP GET requests (e.g. SPA client-side routes)
             void websocket(const std::string& path, WebSocketHandlers handlers); // Register a WebSocket endpoint with event callbacks
             void websocket(const std::string& path, WebSocketMessageHandler onMessage); // Register a simple text-message WebSocket endpoint
@@ -127,6 +130,13 @@ namespace HTTPServer {
             std::vector<Middleware> _middlewares; // Ordered list of registered middleware callbacks executed sequentially prior to route matching
             std::map<std::string, std::map<std::string, RequestHandler>> _routes; // Routing table mapping HTTP method to path to corresponding handler function
             RequestHandler _fallbackGetHandler; // Optional fallback handler invoked when an HTTP GET request path is not explicitly registered
+
+            struct StaticMount { // Registered static filesystem mount mapping a URL prefix to a root directory
+                std::string mountPrefix; // URL prefix, e.g. "/public"
+                std::filesystem::path rootDirectory; // Local filesystem directory path
+                keet::StaticFiles::StaticOptions options; // Static asset delivery configuration
+            };
+            std::vector<StaticMount> _staticMounts; // Registered static file mounts evaluated during GET/HEAD dispatch
 
             std::map<std::string, WebSocketHandlers> _wsRoutes; // Registered WebSocket endpoint routes by path
             std::map<int, std::shared_ptr<ActiveWsConnection>> _wsConnections; // Active WebSocket client connections keyed by fd
@@ -175,6 +185,7 @@ namespace HTTPServer {
             static int _readRequest(int client_fd, ServerRequest& request); // Read full HTTP request from socket, parsing headers and streaming body per Content-Length
 
             static void _setError(ServerResponse& res, int status); // Populate a ServerResponse with a standard JSON error message for given status code
+            void _serveFile(const std::filesystem::path& target, const ServerRequest& request, ServerResponse& response, const keet::StaticFiles::StaticOptions& options); // Read and transmit a static file with caching and MIME detection
             void _dispatch(ServerRequest& request, ServerResponse& response); // Look up matching route handler for request method and path, handling 404, 405, and exceptions
     };
 }

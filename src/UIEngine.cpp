@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <fcntl.h>
+#include <filesystem>
 #include <mutex>
 #include <netdb.h>
 #include <poll.h>
@@ -2037,6 +2038,12 @@ namespace UIEngine {
             }
         } catch (...) {
             // Initial harvest dry-run can fail if components expect session context; styles will be harvested on first renderRootVNode pass
+        }
+
+        // Auto-mount ./public static directory if present
+        std::error_code publicDirEc;
+        if (std::filesystem::exists("./public", publicDirEc) && std::filesystem::is_directory("./public", publicDirEc)) {
+            frontend.serveStatic("/public", "./public");
         }
 
         auto setupSessionPusher = [&frontend, rootFactory](const std::shared_ptr<Session>& s) {
