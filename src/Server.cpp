@@ -14,6 +14,8 @@
 #include <sstream>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <poll.h>
 
 namespace HTTPServer {
     bool ServerRequest::hasQuery(const std::string &key) const { // Check if a query parameter exists
@@ -120,7 +122,7 @@ namespace HTTPServer {
     }
 
     //region public methods
-    Server::Server(const int port, std::string name, const size_t threadPoolSize) : _port(port), _name(std::move(name)), _server_fd(-1), _address{} { // Constructor for the Server class, initializes the port, optional name, and worker pool configuration
+    Server::Server(const int port, std::string name, const size_t threadPoolSize) : _port(port), _name(std::move(name)), _server_fd(-1), _address{}, _wsWakePipe{-1, -1} { // Constructor for the Server class, initializes the port, optional name, and worker pool configuration
         if (port < 0 || port > 65535) { // Validate the port number to ensure it's within the valid range for TCP/UDP ports
             throw std::invalid_argument("Port number must be between 0 and 65535"); // If the port number is invalid, throw an exception to indicate the error
         }
@@ -145,6 +147,7 @@ namespace HTTPServer {
             ::close(_server_fd);
             _server_fd = -1;
         }
+        _stopWsPollLoop();
         _stopThreadPool();
         _log("Server stopped");
     }
@@ -180,9 +183,10 @@ namespace HTTPServer {
         }
         _running = true;
         _startThreadPool();
+        _startWsPollLoop();
         _log("Server started on port " + std::to_string(this->getPort()) + " with " + std::to_string(_threadPoolSize) + " worker threads");
         _acceptLoop(); // Enter the accept loop to continuously accept incoming client connections and hand them off to workers
-        _stopThreadPool();
+        stop();
     }
 
     std::thread Server::startAsync() { // Start the server in a separate background thread so multiple servers can run concurrently
@@ -250,6 +254,85 @@ namespace HTTPServer {
         res.setHeader("Connection", "Upgrade");
         res.setHeader("Sec-WebSocket-Accept", keet::Crypto::computeWebSocketAccept(key));
         return true;
+    }
+
+    void Server::websocket(const std::string& path, WebSocketHandlers handlers) { // Register a WebSocket endpoint with event callbacks
+        std::lock_guard<std::mutex> lock(_wsConnectionsMutex);
+        _wsRoutes[path] = std::move(handlers);
+        _log("Registered WebSocket route: " + path);
+    }
+
+    void Server::websocket(const std::string& path, WebSocketMessageHandler onMessage) { // Register a simple text-message WebSocket endpoint
+        WebSocketHandlers handlers;
+        handlers.onMessage = std::move(onMessage);
+        websocket(path, std::move(handlers));
+    }
+
+    bool Server::sendWebSocketText(const int fd, const std::string_view text) { // Send a thread-safe text WebSocket frame to a client
+        std::shared_ptr<ActiveWsConnection> conn;
+        {
+            std::lock_guard<std::mutex> lock(_wsConnectionsMutex);
+            const auto it = _wsConnections.find(fd);
+            if (it == _wsConnections.end()) {
+                return false;
+            }
+            conn = it->second;
+        }
+
+        const auto frame = keet::WebSocket::makeTextFrame(text);
+        std::lock_guard<std::mutex> lock(conn->sendMutex);
+        size_t totalSent = 0;
+        while (totalSent < frame.size()) {
+            const ssize_t n = send(fd, frame.data() + totalSent, frame.size() - totalSent, 0);
+            if (n > 0) {
+                totalSent += static_cast<size_t>(n);
+            } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                pollfd pfd{ .fd = fd, .events = POLLOUT, .revents = 0 };
+                const int pr = poll(&pfd, 1, 2000);
+                if (pr <= 0) return false;
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool Server::sendWebSocketBinary(const int fd, const uint8_t* data, const size_t length) { // Send a thread-safe binary WebSocket frame to a client
+        std::shared_ptr<ActiveWsConnection> conn;
+        {
+            std::lock_guard<std::mutex> lock(_wsConnectionsMutex);
+            const auto it = _wsConnections.find(fd);
+            if (it == _wsConnections.end()) {
+                return false;
+            }
+            conn = it->second;
+        }
+
+        const auto frame = keet::WebSocket::makeBinaryFrame(data, length);
+        std::lock_guard<std::mutex> lock(conn->sendMutex);
+        size_t totalSent = 0;
+        while (totalSent < frame.size()) {
+            const ssize_t n = send(fd, frame.data() + totalSent, frame.size() - totalSent, 0);
+            if (n > 0) {
+                totalSent += static_cast<size_t>(n);
+            } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                pollfd pfd{ .fd = fd, .events = POLLOUT, .revents = 0 };
+                const int pr = poll(&pfd, 1, 2000);
+                if (pr <= 0) return false;
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void Server::closeWebSocket(const int fd, const uint16_t statusCode, const std::string_view reason) { // Initiate graceful closure of a WebSocket connection
+        _unregisterWebSocketConnection(fd, statusCode, std::string(reason), true);
+    }
+
+    size_t Server::activeWebSocketCount() { // Return the number of currently active WebSocket connections
+        std::lock_guard<std::mutex> lock(_wsConnectionsMutex);
+        return _wsConnections.size();
     }
 
     //endregion public methods
@@ -448,8 +531,42 @@ namespace HTTPServer {
         const int status = _readRequest(client_fd, request); // Read and parse the incoming HTTP request from the client socket, returning 0 on success or an HTTP status code on error
         if (status < 0) { close(client_fd); return; } // If reading failed or the client disconnected prematurely, close the socket and exit early
 
-        if (status != 0) _setError(response, status); // If request reading or validation returned an error status code, set the error response
-        else             _dispatch(request, response); // Otherwise, dispatch the valid request to the matching registered route handler
+        if (status != 0) {
+            _setError(response, status); // If request reading or validation returned an error status code, set the error response
+            const std::string out = _buildResponse(response);
+            write(client_fd, out.c_str(), out.size());
+            close(client_fd);
+            return;
+        }
+
+        if (request.isWebSocketUpgrade()) { // Handle RFC 6455 WebSocket upgrade handshake if requested
+            WebSocketHandlers handlers;
+            bool hasWsRoute = false;
+            {
+                std::lock_guard<std::mutex> lock(_wsConnectionsMutex);
+                const auto it = _wsRoutes.find(request.path);
+                if (it != _wsRoutes.end()) {
+                    handlers = it->second;
+                    hasWsRoute = true;
+                }
+            }
+
+            if (hasWsRoute) {
+                if (!prepareWebSocketHandshake(request, response)) {
+                    const std::string out = _buildResponse(response);
+                    write(client_fd, out.c_str(), out.size());
+                    close(client_fd);
+                    return;
+                }
+
+                const std::string out = _buildResponse(response);
+                write(client_fd, out.c_str(), out.size());
+                _registerWebSocketConnection(client_fd, std::move(request), std::move(handlers));
+                return; // Upgraded persistent WebSocket connection handoff complete
+            }
+        }
+
+        _dispatch(request, response); // Otherwise, dispatch the valid request to the matching registered route handler
 
         const std::string out = _buildResponse(response); // Serialize the ServerResponse object into a formatted HTTP response string
         write(client_fd, out.c_str(), out.size()); // Write the complete HTTP response string to the client socket
@@ -465,13 +582,11 @@ namespace HTTPServer {
         }
     }
 
-    void Server::_stopThreadPool() { // Drain pending client connections, wake all workers, and join worker threads
+    void Server::_stopThreadPool() { // Drain pending tasks, wake all workers, and join worker threads
         {
             std::lock_guard<std::mutex> lock(_queueMutex);
-            while (!_clientQueue.empty()) {
-                const int fd = _clientQueue.front();
-                _clientQueue.pop();
-                close(fd);
+            while (!_taskQueue.empty()) {
+                _taskQueue.pop();
             }
         }
         _cv.notify_all();
@@ -483,22 +598,22 @@ namespace HTTPServer {
         _workers.clear();
     }
 
-    void Server::_workerLoop() { // Worker thread function pulling client file descriptors and processing HTTP requests
+    void Server::_workerLoop() { // Worker thread function pulling tasks from queue and processing them
         while (true) {
-            int client_fd = -1;
+            std::function<void()> task;
             {
                 std::unique_lock<std::mutex> lock(_queueMutex);
                 _cv.wait(lock, [this] {
-                    return !_running || !_clientQueue.empty();
+                    return !_running || !_taskQueue.empty();
                 });
-                if (!_running && _clientQueue.empty()) {
+                if (!_running && _taskQueue.empty()) {
                     break;
                 }
-                client_fd = _clientQueue.front();
-                _clientQueue.pop();
+                task = std::move(_taskQueue.front());
+                _taskQueue.pop();
             }
-            if (client_fd != -1) {
-                _handleClient(client_fd);
+            if (task) {
+                task();
             }
         }
     }
@@ -515,11 +630,269 @@ namespace HTTPServer {
                 _logError("Failed to accept connection: " + std::string(strerror(errno)));
                 continue;
             }
-            {
-                std::lock_guard<std::mutex> lock(_queueMutex);
-                _clientQueue.push(client_fd);
+            _enqueueWork([this, client_fd] {
+                _handleClient(client_fd);
+            });
+        }
+    }
+
+    void Server::_enqueueWork(std::function<void()> task) { // Enqueue a unit of work onto the worker thread pool
+        {
+            std::lock_guard<std::mutex> lock(_queueMutex);
+            _taskQueue.push(std::move(task));
+        }
+        _cv.notify_one();
+    }
+
+    void Server::_registerWebSocketConnection(const int fd, ServerRequest req, WebSocketHandlers handlers) { // Track new persistent WebSocket connection
+        const int flags = fcntl(fd, F_GETFL, 0);
+        if (flags >= 0) {
+            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        }
+#ifdef SO_NOSIGPIPE
+        constexpr int opt = 1;
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
+#endif
+
+        auto conn = std::make_shared<ActiveWsConnection>();
+        conn->fd = fd;
+        conn->request = std::move(req);
+        conn->handlers = std::move(handlers);
+
+        {
+            std::lock_guard<std::mutex> lock(_wsConnectionsMutex);
+            _wsConnections[fd] = conn;
+        }
+
+        if (_wsWakePipe[1] != -1) {
+            const char wake = 'w';
+            (void)write(_wsWakePipe[1], &wake, 1);
+        }
+
+        if (conn->handlers.onOpen) {
+            _enqueueWork([handlers = conn->handlers, fd, req = conn->request] {
+                handlers.onOpen(fd, req);
+            });
+        }
+    }
+
+    void Server::_unregisterWebSocketConnection(const int fd, const uint16_t code, const std::string& reason, const bool sendCloseFrame) { // Close and untrack WebSocket connection
+        std::shared_ptr<ActiveWsConnection> conn;
+        {
+            std::lock_guard<std::mutex> lock(_wsConnectionsMutex);
+            const auto it = _wsConnections.find(fd);
+            if (it == _wsConnections.end()) {
+                return;
             }
-            _cv.notify_one(); // Wake an available worker thread in the pool to process this connection
+            conn = it->second;
+            _wsConnections.erase(it);
+        }
+        if (sendCloseFrame) {
+            const auto closeFrame = keet::WebSocket::makeCloseFrame(code, reason);
+            std::lock_guard<std::mutex> lock(conn->sendMutex);
+            send(fd, closeFrame.data(), closeFrame.size(), 0);
+        }
+        close(fd);
+        if (_wsWakePipe[1] != -1) {
+            const char wake = 'w';
+            (void)write(_wsWakePipe[1], &wake, 1);
+        }
+        if (conn->handlers.onClose) {
+            _enqueueWork([handlers = conn->handlers, fd, code, reason] {
+                handlers.onClose(fd, code, reason);
+            });
+        }
+    }
+
+    void Server::_startWsPollLoop() { // Launch background WebSocket event poll loop
+        if (_wsWakePipe[0] != -1 || _wsWakePipe[1] != -1) {
+            return;
+        }
+        if (pipe(_wsWakePipe) == -1) {
+            _logError("Failed to create WebSocket wake pipe");
+            return;
+        }
+        const int flags0 = fcntl(_wsWakePipe[0], F_GETFL, 0);
+        if (flags0 >= 0) fcntl(_wsWakePipe[0], F_SETFL, flags0 | O_NONBLOCK);
+        const int flags1 = fcntl(_wsWakePipe[1], F_GETFL, 0);
+        if (flags1 >= 0) fcntl(_wsWakePipe[1], F_SETFL, flags1 | O_NONBLOCK);
+
+        _wsPollThread = std::thread([this] {
+            _wsPollLoop();
+        });
+    }
+
+    void Server::_stopWsPollLoop() { // Terminate background WebSocket event poll loop
+        if (_wsWakePipe[1] != -1) {
+            const char wake = 'q';
+            (void)write(_wsWakePipe[1], &wake, 1);
+        }
+        if (_wsPollThread.joinable()) {
+            _wsPollThread.join();
+        }
+        std::vector<std::shared_ptr<ActiveWsConnection>> toClose;
+        {
+            std::lock_guard<std::mutex> lock(_wsConnectionsMutex);
+            for (const auto& [fd, conn] : _wsConnections) {
+                toClose.push_back(conn);
+            }
+            _wsConnections.clear();
+        }
+        for (const auto& conn : toClose) {
+            const auto closeFrame = keet::WebSocket::makeCloseFrame(1001, "Server shutting down");
+            {
+                std::lock_guard<std::mutex> lock(conn->sendMutex);
+                send(conn->fd, closeFrame.data(), closeFrame.size(), 0);
+            }
+            close(conn->fd);
+            if (conn->handlers.onClose) {
+                conn->handlers.onClose(conn->fd, 1001, "Server shutting down");
+            }
+        }
+        if (_wsWakePipe[0] != -1) {
+            close(_wsWakePipe[0]);
+            _wsWakePipe[0] = -1;
+        }
+        if (_wsWakePipe[1] != -1) {
+            close(_wsWakePipe[1]);
+            _wsWakePipe[1] = -1;
+        }
+    }
+
+    void Server::_wsPollLoop() { // Dedicated event loop monitoring active WebSocket file descriptors with poll()
+        while (_running) {
+            std::vector<pollfd> fds;
+            fds.reserve(64);
+            fds.push_back(pollfd{ .fd = _wsWakePipe[0], .events = POLLIN, .revents = 0 });
+
+            {
+                std::lock_guard<std::mutex> lock(_wsConnectionsMutex);
+                for (const auto& [fd, _] : _wsConnections) {
+                    fds.push_back(pollfd{ .fd = fd, .events = POLLIN, .revents = 0 });
+                }
+            }
+
+            const int ret = poll(fds.data(), static_cast<nfds_t>(fds.size()), 1000);
+            if (ret < 0) {
+                if (errno == EINTR) continue;
+                if (!_running) break;
+                _logError("WebSocket poll error: " + std::string(strerror(errno)));
+                continue;
+            }
+
+            if (!_running) break;
+
+            if (fds[0].revents & POLLIN) {
+                char drainBuf[64];
+                while (read(_wsWakePipe[0], drainBuf, sizeof(drainBuf)) > 0) {}
+            }
+
+            for (size_t i = 1; i < fds.size(); ++i) {
+                const int fd = fds[i].fd;
+                const short revents = fds[i].revents;
+                if (revents == 0) continue;
+
+                if (revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                    _unregisterWebSocketConnection(fd, 1006, "Connection dropped", false);
+                    continue;
+                }
+
+                if (revents & POLLIN) {
+                    std::shared_ptr<ActiveWsConnection> conn;
+                    {
+                        std::lock_guard<std::mutex> lock(_wsConnectionsMutex);
+                        const auto it = _wsConnections.find(fd);
+                        if (it == _wsConnections.end()) continue;
+                        conn = it->second;
+                    }
+
+                    uint8_t buffer[4096];
+                    bool dropConnection = false;
+                    while (true) {
+                        const ssize_t n = recv(fd, buffer, sizeof(buffer), 0);
+                        if (n > 0) {
+                            conn->rxBuffer.insert(conn->rxBuffer.end(), buffer, buffer + n);
+                        } else if (n == 0) {
+                            dropConnection = true;
+                            break;
+                        } else {
+                            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                                break;
+                            }
+                            dropConnection = true;
+                            break;
+                        }
+                    }
+
+                    if (dropConnection) {
+                        _unregisterWebSocketConnection(fd, 1006, "Connection closed by client", false);
+                        continue;
+                    }
+
+                    size_t offset = 0;
+                    while (offset < conn->rxBuffer.size()) {
+                        auto parseResult = keet::WebSocket::parseFrame(conn->rxBuffer.data() + offset, conn->rxBuffer.size() - offset, true);
+                        if (parseResult.status == keet::WebSocket::ParseStatus::NeedMoreData) {
+                            break;
+                        }
+                        if (parseResult.status == keet::WebSocket::ParseStatus::ProtocolError) {
+                            if (conn->handlers.onError) {
+                                _enqueueWork([handlers = conn->handlers, fd, desc = parseResult.errorMessage] {
+                                    handlers.onError(fd, desc);
+                                });
+                            }
+                            _unregisterWebSocketConnection(fd, static_cast<uint16_t>(keet::WebSocket::CloseCode::ProtocolError), parseResult.errorMessage, true);
+                            break;
+                        }
+
+                        offset += parseResult.bytesConsumed;
+                        keet::WebSocket::Frame frame = std::move(*parseResult.frame);
+
+                        if (frame.opcode == keet::WebSocket::Opcode::Close) {
+                            const uint16_t code = frame.closeStatusCode();
+                            const std::string reason = frame.closeReason();
+                            _unregisterWebSocketConnection(fd, code, reason, true);
+                            break;
+                        }
+                        if (frame.opcode == keet::WebSocket::Opcode::Ping) {
+                            const auto pong = keet::WebSocket::handlePing(frame);
+                            std::lock_guard<std::mutex> sendLock(conn->sendMutex);
+                            send(fd, pong.data(), pong.size(), 0);
+                        } else if (frame.opcode == keet::WebSocket::Opcode::Pong) {
+                            // Pong heartbeat response received
+                        } else {
+                            auto defragRes = conn->defragmenter.processFrame(std::move(frame));
+                            if (defragRes == keet::WebSocket::MessageDefragmenter::Result::Error) {
+                                std::string err = conn->defragmenter.errorMessage();
+                                if (conn->handlers.onError) {
+                                    _enqueueWork([handlers = conn->handlers, fd, desc = err] {
+                                        handlers.onError(fd, desc);
+                                    });
+                                }
+                                _unregisterWebSocketConnection(fd, static_cast<uint16_t>(keet::WebSocket::CloseCode::ProtocolError), err, true);
+                                break;
+                            }
+                            if (defragRes == keet::WebSocket::MessageDefragmenter::Result::MessageComplete) {
+                                if (conn->defragmenter.messageOpcode() == keet::WebSocket::Opcode::Text) {
+                                    std::string msg = conn->defragmenter.messageText();
+                                    conn->defragmenter.reset();
+                                    if (conn->handlers.onMessage) {
+                                        _enqueueWork([handlers = conn->handlers, fd, msg = std::move(msg)] {
+                                            handlers.onMessage(fd, msg);
+                                        });
+                                    }
+                                } else {
+                                    conn->defragmenter.reset();
+                                }
+                            }
+                        }
+                    }
+
+                    if (offset > 0) {
+                        conn->rxBuffer.erase(conn->rxBuffer.begin(), conn->rxBuffer.begin() + offset);
+                    }
+                }
+            }
         }
     }
 
