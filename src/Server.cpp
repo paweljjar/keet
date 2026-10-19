@@ -4,6 +4,7 @@
 
 #include "keet/Server.h"
 #include "keet/Json.h"
+#include "keet/Crypto.h"
 
 #include <algorithm>
 #include <iomanip>
@@ -65,6 +66,24 @@ namespace HTTPServer {
             start = end + 1;
         }
         return fallback;
+    }
+
+    bool ServerRequest::isWebSocketUpgrade() const { // Check if the request is an RFC 6455 WebSocket upgrade handshake
+        if (method != "GET") {
+            return false;
+        }
+        std::string upgrade = getHeader("upgrade");
+        for (char& c : upgrade) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        if (upgrade != "websocket") {
+            return false;
+        }
+        std::string conn = getHeader("connection");
+        for (char& c : conn) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return conn.find("upgrade") != std::string::npos;
     }
 
     void ServerResponse::setHeader(std::string name, std::string value) { // Set or overwrite an outgoing HTTP response header
@@ -204,6 +223,35 @@ namespace HTTPServer {
         res.body = std::move(html); // Move the provided HTML string into the body of the response
     }
 
+    bool Server::prepareWebSocketHandshake(const ServerRequest& req, ServerResponse& res) { // Validate RFC 6455 handshake headers and build 101 Switching Protocols response
+        if (!req.isWebSocketUpgrade()) {
+            return false;
+        }
+
+        const std::string version = req.getHeader("sec-websocket-version");
+        if (version != "13") {
+            res.status = 426; // Upgrade Required per RFC 6455 section 4.2.2 and 4.4
+            res.setHeader("Sec-WebSocket-Version", "13");
+            res.contentType = "text/plain";
+            res.body = "Sec-WebSocket-Version 13 required";
+            return false;
+        }
+
+        const std::string key = req.getHeader("sec-websocket-key");
+        if (key.empty()) {
+            res.status = HTTP_BAD_REQUEST;
+            res.contentType = "text/plain";
+            res.body = "Missing Sec-WebSocket-Key";
+            return false;
+        }
+
+        res.status = 101; // Switching Protocols
+        res.setHeader("Upgrade", "websocket");
+        res.setHeader("Connection", "Upgrade");
+        res.setHeader("Sec-WebSocket-Accept", keet::Crypto::computeWebSocketAccept(key));
+        return true;
+    }
+
     //endregion public methods
 
     //region private methods
@@ -278,6 +326,7 @@ namespace HTTPServer {
 
     std::string Server::_getStatusMessage(const int status) { // Return a human-readable message corresponding to an HTTP status code, allowing the server to provide meaningful responses to clients
         switch (status) {
+            case 101: return "Switching Protocols";
             case HTTP_OK:
                 return "OK";
             case HTTP_NOT_FOUND:
@@ -288,6 +337,7 @@ namespace HTTPServer {
             case 400: return "Bad Request";
             case 405: return "Method Not Allowed";
             case 413: return "Payload Too Large";
+            case 426: return "Upgrade Required";
             case 431: return "Request Header Fields Too Large";
             case 501: return "Not Implemented";
             default:
@@ -296,6 +346,16 @@ namespace HTTPServer {
     }
 
     std::string Server::_buildResponse(const ServerResponse& response) { // Build a complete HTTP response string from the provided ServerResponse object, including the status line, headers, and body, allowing the server to send a properly formatted response to the client
+        if (response.status == 101) {
+            std::ostringstream out;
+            out << "HTTP/1.1 101 Switching Protocols\r\n";
+            for (const auto& [name, value] : response.headers) {
+                out << name << ": " << value << "\r\n";
+            }
+            out << "\r\n";
+            return out.str();
+        }
+
         std::ostringstream out;
         out << "HTTP/1.1 " << response.status << " " << _getStatusMessage(response.status) << "\r\n"
                     << "Content-Type: " << response.contentType

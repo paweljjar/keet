@@ -35,6 +35,7 @@ namespace HTTPServer {
         [[nodiscard]] std::string getQuery(const std::string& key, const std::string& fallback = "") const; // Retrieve a query parameter value, returning fallback if not found
         [[nodiscard]] std::string getHeader(const std::string& key, const std::string& fallback = "") const; // Retrieve a request header value (case-insensitive), returning fallback if not found
         [[nodiscard]] std::string getCookie(const std::string& name, const std::string& fallback = "") const; // Retrieve a cookie value by name from the Cookie header, returning fallback if not found
+        [[nodiscard]] bool isWebSocketUpgrade() const; // Check if the request is an RFC 6455 WebSocket upgrade handshake
         [[nodiscard]] Json json() const { // Parse incoming request body as JSON
             if (body.empty()) return Json::Object{};
             return Json::parse(body);
@@ -77,6 +78,7 @@ namespace HTTPServer {
 
             static void sendJson(ServerResponse& res, int status, const Json& json, int indent = -1); // Helper to serialize a Json object, set Content-Type to application/json, and set status code
             static void sendHtml(ServerResponse& res, int status, const std::string &html); // Helper to set Content-Type to text/html and set status code
+            static bool prepareWebSocketHandshake(const ServerRequest& req, ServerResponse& res); // Validate RFC 6455 handshake headers and build 101 Switching Protocols response
 
         private:
             int _port; // Port number on which the server listens for incoming connections

@@ -157,3 +157,6 @@ fabric.properties
 
 database.json
 /.idea/AICommit.xml
+
+/tests
+/build
