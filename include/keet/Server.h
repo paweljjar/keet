@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 
 #include "Json.h"
+#include "WebSocket.h"
 
 namespace HTTPServer {
 #define HTTP_INTERNAL_SERVER_ERROR 500 // HTTP status code 500: Server encountered an unexpected condition preventing it from fulfilling the request
@@ -23,6 +24,22 @@ namespace HTTPServer {
 #define HTTP_CREATED 201 // HTTP status code 201: Request was successful and resulted in the creation of a new resource
 #define HTTP_BAD_REQUEST 400 // HTTP status code 400: Server cannot process the request due to malformed request syntax
 #define HTTP_NOT_FOUND 404 // HTTP status code 404: Requested resource could not be found on the server
+
+    struct ServerRequest; // Forward declaration for ServerRequest
+    struct ServerResponse; // Forward declaration for ServerResponse
+
+    using RequestHandler = std::function<void(const ServerRequest&, ServerResponse&)>; // Function type definition for route handlers processing request and generating response
+    using WebSocketMessageHandler = std::function<void(int fd, const std::string& message)>; // Handler processing incoming text WebSocket messages
+    using WebSocketOpenHandler = std::function<void(int fd, const ServerRequest& req)>; // Handler invoked when WebSocket handshake completes successfully
+    using WebSocketCloseHandler = std::function<void(int fd, uint16_t code, const std::string& reason)>; // Handler invoked when WebSocket connection terminates
+    using WebSocketErrorHandler = std::function<void(int fd, const std::string& error)>; // Handler invoked on WebSocket protocol or transport errors
+
+    struct WebSocketHandlers { // Grouping of event callbacks managing a persistent WebSocket endpoint lifecycle
+        WebSocketOpenHandler onOpen; // Callback executed upon connection establishment
+        WebSocketMessageHandler onMessage; // Callback executed upon receiving a complete text message
+        WebSocketCloseHandler onClose; // Callback executed upon connection closure
+        WebSocketErrorHandler onError; // Callback executed upon connection or protocol error
+    };
 
     struct ServerRequest { // Represents an incoming HTTP request containing parsed method, path, query parameters, headers, and body
         std::string method; // HTTP request method (e.g., "GET", "POST")
@@ -35,6 +52,7 @@ namespace HTTPServer {
         [[nodiscard]] std::string getQuery(const std::string& key, const std::string& fallback = "") const; // Retrieve a query parameter value, returning fallback if not found
         [[nodiscard]] std::string getHeader(const std::string& key, const std::string& fallback = "") const; // Retrieve a request header value (case-insensitive), returning fallback if not found
         [[nodiscard]] std::string getCookie(const std::string& name, const std::string& fallback = "") const; // Retrieve a cookie value by name from the Cookie header, returning fallback if not found
+        [[nodiscard]] bool isWebSocketUpgrade() const; // Check if the request is an RFC 6455 WebSocket upgrade handshake
         [[nodiscard]] Json json() const { // Parse incoming request body as JSON
             if (body.empty()) return Json::Object{};
             return Json::parse(body);
@@ -70,6 +88,12 @@ namespace HTTPServer {
             void del(const std::string& path, RequestHandler handler); // Register a route handler callback for HTTP DELETE requests at the given path
             void route(const std::string& method, const std::string& path, RequestHandler handler); // Register a route handler callback for arbitrary HTTP method at the given path
             void setFallbackGetHandler(RequestHandler handler); // Register a fallback handler for unmatched HTTP GET requests (e.g. SPA client-side routes)
+            void websocket(const std::string& path, WebSocketHandlers handlers); // Register a WebSocket endpoint with event callbacks
+            void websocket(const std::string& path, WebSocketMessageHandler onMessage); // Register a simple text-message WebSocket endpoint
+            bool sendWebSocketText(int fd, std::string_view text); // Send a thread-safe text WebSocket frame to a client
+            bool sendWebSocketBinary(int fd, const uint8_t* data, size_t length); // Send a thread-safe binary WebSocket frame to a client
+            void closeWebSocket(int fd, uint16_t statusCode = 1000, std::string_view reason = ""); // Initiate graceful closure of a WebSocket connection
+            [[nodiscard]] size_t activeWebSocketCount(); // Return the number of currently active WebSocket connections
             int getPort() const; // Return the configured port number the server listens on
             const std::string& getName() const; // Return the configured name of the server
             size_t getThreadPoolSize() const; // Return configured or effective thread pool worker count
@@ -77,8 +101,18 @@ namespace HTTPServer {
 
             static void sendJson(ServerResponse& res, int status, const Json& json, int indent = -1); // Helper to serialize a Json object, set Content-Type to application/json, and set status code
             static void sendHtml(ServerResponse& res, int status, const std::string &html); // Helper to set Content-Type to text/html and set status code
+            static bool prepareWebSocketHandshake(const ServerRequest& req, ServerResponse& res); // Validate RFC 6455 handshake headers and build 101 Switching Protocols response
 
         private:
+            struct ActiveWsConnection { // Internal representation of an upgraded persistent WebSocket connection
+                int fd = -1; // Socket file descriptor
+                ServerRequest request; // Initial HTTP upgrade request
+                WebSocketHandlers handlers; // Registered event handlers for this endpoint
+                std::vector<uint8_t> rxBuffer; // Incoming byte accumulation buffer for stream parsing
+                keet::WebSocket::MessageDefragmenter defragmenter; // Message defragmenter assembling multi-frame messages
+                std::mutex sendMutex; // Mutex protecting concurrent writes to this socket
+            };
+
             int _port; // Port number on which the server listens for incoming connections
             std::string _name; // Optional identifier name used to prefix server log messages
             int _server_fd; // Socket file descriptor for the server listener
@@ -86,9 +120,15 @@ namespace HTTPServer {
             std::map<std::string, std::map<std::string, RequestHandler>> _routes; // Routing table mapping HTTP method to path to corresponding handler function
             RequestHandler _fallbackGetHandler; // Optional fallback handler invoked when an HTTP GET request path is not explicitly registered
 
+            std::map<std::string, WebSocketHandlers> _wsRoutes; // Registered WebSocket endpoint routes by path
+            std::map<int, std::shared_ptr<ActiveWsConnection>> _wsConnections; // Active WebSocket client connections keyed by fd
+            std::mutex _wsConnectionsMutex; // Mutex protecting WebSocket connections map and routes
+            std::thread _wsPollThread; // Dedicated background thread running the WebSocket poll loop
+            int _wsWakePipe[2] = {-1, -1}; // Unidirectional pipe used to awaken poll() on connection updates or shutdown
+
             size_t _threadPoolSize; // Configured worker thread pool size (0 means auto-detect based on hardware concurrency)
             std::vector<std::thread> _workers; // Worker threads handling client HTTP requests concurrently
-            std::queue<int> _clientQueue; // Queue of pending accepted client socket file descriptors
+            std::queue<std::function<void()>> _taskQueue; // Queue of pending worker tasks (HTTP requests and WS messages)
             std::mutex _queueMutex; // Mutex guarding access to the client socket queue
             std::condition_variable _cv; // Condition variable notifying workers when new client connections are enqueued
             std::atomic<bool> _running{false}; // Atomic flag tracking whether the server and its worker pool are active
@@ -117,6 +157,12 @@ namespace HTTPServer {
             void _workerLoop(); // Worker loop dequeuing client sockets and executing _handleClient
             void _startThreadPool(); // Spawn worker threads in the pool
             void _stopThreadPool(); // Signal worker threads to stop and join them
+            void _enqueueWork(std::function<void()> task); // Enqueue a unit of work onto the worker thread pool
+            void _registerWebSocketConnection(int fd, ServerRequest req, WebSocketHandlers handlers); // Track new persistent WebSocket connection
+            void _unregisterWebSocketConnection(int fd, uint16_t code, const std::string& reason, bool sendCloseFrame); // Close and untrack WebSocket connection
+            void _startWsPollLoop(); // Launch background WebSocket event poll loop
+            void _stopWsPollLoop(); // Terminate background WebSocket event poll loop
+            void _wsPollLoop(); // Dedicated event loop monitoring active WebSocket file descriptors with poll()
 
             static int _readRequest(int client_fd, ServerRequest& request); // Read full HTTP request from socket, parsing headers and streaming body per Content-Length
 

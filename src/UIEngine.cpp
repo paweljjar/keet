@@ -254,6 +254,68 @@ namespace UIEngine {
         lastAccessed = std::chrono::steady_clock::now();
     }
 
+    void Session::bindWebSocket(const int fd, HTTPServer::Server* srv) { // Associate a WebSocket connection with this session
+        std::lock_guard lock(mutex);
+        wsFds.insert(fd);
+        server = srv;
+        lastAccessed = std::chrono::steady_clock::now();
+    }
+
+    void Session::unbindWebSocket(const int fd) { // Remove an associated WebSocket connection from this session
+        std::lock_guard lock(mutex);
+        wsFds.erase(fd);
+        lastAccessed = std::chrono::steady_clock::now();
+    }
+
+    bool Session::hasActiveWebSocket() const { // Check if session has at least one active WebSocket connection
+        std::lock_guard lock(mutex);
+        return !wsFds.empty();
+    }
+
+    bool Session::pushUpdate(const HTTPServer::Json& payload) { // Push arbitrary JSON message to all connected WebSockets
+        return pushText(payload.dump());
+    }
+
+    bool Session::pushText(const std::string_view text) { // Push raw text/JSON message to all connected WebSockets
+        std::vector<int> targets;
+        HTTPServer::Server* srv = nullptr;
+        {
+            std::lock_guard lock(mutex);
+            if (!server || wsFds.empty()) return false;
+            srv = server;
+            targets.assign(wsFds.begin(), wsFds.end());
+        }
+        bool anySent = false;
+        for (const int fd : targets) {
+            if (srv->sendWebSocketText(fd, text)) {
+                anySent = true;
+            }
+        }
+        return anySent;
+    }
+
+    bool Session::pushState(const std::string& key, const HTTPServer::Json& value) { // Push a state mutation notification
+        const HTTPServer::Json msg = HTTPServer::Json::Object{
+            {"type", "state_update"},
+            {"key", key},
+            {"value", value}
+        };
+        return pushUpdate(msg);
+    }
+
+    bool Session::pushRender() { // Re-render VDOM for this session and push updated tree to connected WebSockets
+        std::function<void()> pusher;
+        {
+            std::lock_guard lock(mutex);
+            pusher = renderPusher;
+        }
+        if (pusher) {
+            pusher();
+            return true;
+        }
+        return false;
+    }
+
     std::string currentPath() { // Retrieve the normalized active client-side route path for the current session
         const auto session = SessionContext::getCurrentSession();
         if (session) {
@@ -300,6 +362,18 @@ namespace UIEngine {
         }
         std::lock_guard lock(fallbackStateMutex);
         fallbackLocale = std::move(locale);
+    }
+
+    std::shared_ptr<Session> currentSession() { // Retrieve the active Session on the calling thread
+        return SessionContext::getCurrentSession();
+    }
+
+    void broadcastRender() { // Re-render and push updated VDOM to all active connected sessions
+        SessionManager::instance().broadcastRender();
+    }
+
+    void broadcastUpdate(const HTTPServer::Json& payload) { // Push JSON payload to all active connected sessions
+        SessionManager::instance().broadcastUpdate(payload);
     }
 
     namespace {
@@ -352,6 +426,13 @@ namespace UIEngine {
                 removedSession = it->second;
                 _sessions.erase(it);
             }
+            for (auto fit = _fdToSessionId.begin(); fit != _fdToSessionId.end(); ) {
+                if (fit->second == sessionId) {
+                    fit = _fdToSessionId.erase(fit);
+                } else {
+                    ++fit;
+                }
+            }
         }
         if (removedSession) {
             SessionContext sessionCtx(removedSession);
@@ -369,6 +450,69 @@ namespace UIEngine {
         return _sessions.size();
     }
 
+    std::shared_ptr<Session> SessionManager::getSessionByFd(const int fd) { // Look up session by associated WebSocket fd
+        std::lock_guard lock(_mutex);
+        const auto it = _fdToSessionId.find(fd);
+        if (it != _fdToSessionId.end()) {
+            const auto sit = _sessions.find(it->second);
+            if (sit != _sessions.end()) {
+                return sit->second;
+            }
+        }
+        return nullptr;
+    }
+
+    void SessionManager::bindSessionFd(const int fd, const std::string& sessionId) { // Map fd to sessionId
+        std::lock_guard lock(_mutex);
+        _fdToSessionId[fd] = sessionId;
+    }
+
+    void SessionManager::unbindSessionFd(const int fd) { // Unmap fd and remove from its session
+        std::shared_ptr<Session> session;
+        {
+            std::lock_guard lock(_mutex);
+            const auto it = _fdToSessionId.find(fd);
+            if (it != _fdToSessionId.end()) {
+                const auto sit = _sessions.find(it->second);
+                if (sit != _sessions.end()) {
+                    session = sit->second;
+                }
+                _fdToSessionId.erase(it);
+            }
+        }
+        if (session) {
+            session->unbindWebSocket(fd);
+        }
+    }
+
+    void SessionManager::broadcastRender() { // Re-render and push updated VDOM to all active sessions
+        std::vector<std::shared_ptr<Session>> active;
+        {
+            std::lock_guard lock(_mutex);
+            active.reserve(_sessions.size());
+            for (const auto& [_, s] : _sessions) {
+                active.push_back(s);
+            }
+        }
+        for (const auto& s : active) {
+            s->pushRender();
+        }
+    }
+
+    void SessionManager::broadcastUpdate(const HTTPServer::Json& payload) { // Push JSON payload to all active sessions
+        std::vector<std::shared_ptr<Session>> active;
+        {
+            std::lock_guard lock(_mutex);
+            active.reserve(_sessions.size());
+            for (const auto& [_, s] : _sessions) {
+                active.push_back(s);
+            }
+        }
+        for (const auto& s : active) {
+            s->pushUpdate(payload);
+        }
+    }
+
     void SessionManager::_pruneExpiredSessionsLocked() { // Prune sessions that have exceeded the configured TTL (must hold _mutex)
         const auto now = std::chrono::steady_clock::now();
         for (auto it = _sessions.begin(); it != _sessions.end(); ) {
@@ -378,8 +522,16 @@ namespace UIEngine {
                 isExpired = (now - it->second->lastAccessed > _ttl);
             }
             if (isExpired) {
+                const std::string expiredId = it->first;
                 std::shared_ptr<Session> expiredSession = it->second;
                 it = _sessions.erase(it);
+                for (auto fit = _fdToSessionId.begin(); fit != _fdToSessionId.end(); ) {
+                    if (fit->second == expiredId) {
+                        fit = _fdToSessionId.erase(fit);
+                    } else {
+                        ++fit;
+                    }
+                }
                 SessionContext sessionCtx(expiredSession);
                 Detail::unmountAllComponents(*expiredSession);
             } else {
@@ -1218,6 +1370,13 @@ namespace UIEngine {
             ? window.crypto.randomUUID().replace(/-/g, "")
             : "tab_" + Math.random().toString(36).substring(2) + Date.now().toString(36);
 
+        let ws = null;
+        let wsConnected = false;
+        let reconnectTimer = null;
+        let reconnectDelay = 1000;
+        const MAX_RECONNECT_DELAY = 10000;
+        let pendingResolvers = [];
+
         function getSessionId() {
             return currentSessionId;
         }
@@ -1231,6 +1390,81 @@ namespace UIEngine {
             if (serverRoute && window.location.pathname !== serverRoute) {
                 window.history.pushState({}, "", serverRoute);
             }
+        }
+
+        function resolvePendingRequests() {
+            const resolvers = pendingResolvers;
+            pendingResolvers = [];
+            for (const r of resolvers) r();
+        }
+
+        function connectWebSocket() {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                return;
+            }
+            try {
+                const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+                const sid = getSessionId();
+                const wsUrl = proto + "//" + window.location.host + "/ws?sessionId=" + encodeURIComponent(sid);
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    wsConnected = true;
+                    reconnectDelay = 1000;
+                    if (!currentVNode) {
+                        ws.send(JSON.stringify({ type: "sync" }));
+                    }
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        if (!msg || typeof msg !== "object") return;
+
+                        if (msg.type === "init") {
+                            if (msg.sessionId) currentSessionId = msg.sessionId;
+                        } else if (msg.type === "vdom") {
+                            if (msg.vdom) {
+                                renderTree(msg.vdom);
+                            }
+                            if (msg.path && window.location.pathname !== msg.path) {
+                                window.history.pushState({}, "", msg.path);
+                            }
+                            resolvePendingRequests();
+                        } else if (msg.type === "error") {
+                            resolvePendingRequests();
+                            showToast(msg.error || "Server error occurred", true);
+                        } else if (msg.type === "notification") {
+                            showToast(msg.message || msg.title || JSON.stringify(msg), false);
+                        }
+                    } catch (e) {
+                        console.error("Malformed WebSocket message:", e);
+                    }
+                };
+
+                ws.onclose = () => {
+                    wsConnected = false;
+                    resolvePendingRequests();
+                    scheduleReconnect();
+                };
+
+                ws.onerror = () => {
+                    wsConnected = false;
+                    resolvePendingRequests();
+                };
+            } catch (err) {
+                console.warn("WebSocket initialization error:", err);
+                scheduleReconnect();
+            }
+        }
+
+        function scheduleReconnect() {
+            if (reconnectTimer) return;
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                connectWebSocket();
+                reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT_DELAY);
+            }, reconnectDelay);
         }
 
         function renderTree(nextVNode) {
@@ -1251,19 +1485,23 @@ namespace UIEngine {
                 if (pushState && window.location.pathname !== targetPath) {
                     window.history.pushState({}, "", targetPath);
                 }
-                const sid = getSessionId();
-                const res = await fetch("/navigate", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-Session-Id": sid
-                    },
-                    body: JSON.stringify({ path: targetPath })
-                });
-                syncSessionId(res);
-                if (res.ok) {
-                    const nextVNode = await res.json();
-                    renderTree(nextVNode);
+                if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "navigate", path: targetPath }));
+                } else {
+                    const sid = getSessionId();
+                    const res = await fetch("/navigate", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Session-Id": sid
+                        },
+                        body: JSON.stringify({ path: targetPath })
+                    });
+                    syncSessionId(res);
+                    if (res.ok) {
+                        const nextVNode = await res.json();
+                        renderTree(nextVNode);
+                    }
                 }
             } catch (err) {
                 console.error("Route navigation failed:", err);
@@ -1320,41 +1558,55 @@ namespace UIEngine {
             }
 
             try {
-                const sid = getSessionId();
-                const res = await fetch("/event", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-Session-Id": sid
-                    },
-                    body: JSON.stringify({ handlerId, ...eventPayload })
-                });
-                syncSessionId(res);
-                if (res.ok) {
-                    const nextVNode = await res.json();
-                    renderTree(nextVNode);
-                } else if (res.status === 404) {
-                    const currentPath = encodeURIComponent(window.location.pathname || "/");
-                    const vdomRes = await fetch("/vdom?path=" + currentPath, {
-                        headers: { "X-Session-Id": sid }
+                if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+                    await new Promise((resolve) => {
+                        const timer = setTimeout(() => {
+                            pendingResolvers = pendingResolvers.filter(r => r !== resolve);
+                            resolve();
+                        }, 5000);
+                        pendingResolvers.push(() => {
+                            clearTimeout(timer);
+                            resolve();
+                        });
+                        ws.send(JSON.stringify({ handlerId, ...eventPayload, type: "event" }));
                     });
-                    syncSessionId(vdomRes);
-                    if (vdomRes.ok) {
-                        renderTree(await vdomRes.json());
-                    }
                 } else {
-                    let errMsg = "Server action failed (HTTP " + res.status + ")";
-                    try {
-                        const errData = await res.json();
-                        if (errData && errData.error) {
-                            errMsg = errData.error;
+                    const sid = getSessionId();
+                    const res = await fetch("/event", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Session-Id": sid
+                        },
+                        body: JSON.stringify({ handlerId, ...eventPayload })
+                    });
+                    syncSessionId(res);
+                    if (res.ok) {
+                        const nextVNode = await res.json();
+                        renderTree(nextVNode);
+                    } else if (res.status === 404) {
+                        const currentPath = encodeURIComponent(window.location.pathname || "/");
+                        const vdomRes = await fetch("/vdom?path=" + currentPath, {
+                            headers: { "X-Session-Id": sid }
+                        });
+                        syncSessionId(vdomRes);
+                        if (vdomRes.ok) {
+                            renderTree(await vdomRes.json());
                         }
-                    } catch (_) {}
-                    showToast(errMsg, true);
+                    } else {
+                        let errMsg = "Server action failed (HTTP " + res.status + ")";
+                        try {
+                            const errData = await res.json();
+                            if (errData && errData.error) {
+                                errMsg = errData.error;
+                            }
+                        } catch (_) {}
+                        showToast(errMsg, true);
+                    }
                 }
             } catch (err) {
                 console.error("Event dispatch failed:", err);
-                showToast("Network request failed: " + (err.message || "Connection error"), true);
+                showToast("Action failed: " + (err.message || "Connection error"), true);
             } finally {
                 if (triggerEl && triggerEl.nodeType === 1 && document.body.contains(triggerEl)) {
                     triggerEl.classList.remove("keet-pending");
@@ -1651,41 +1903,58 @@ namespace UIEngine {
         async function initApp() {
             const sid = getSessionId();
             const initialPath = encodeURIComponent(window.location.pathname || "/");
-            const res = await fetch("/vdom?path=" + initialPath, {
-                headers: { "X-Session-Id": sid }
-            });
-            syncSessionId(res);
-            if (res.ok) {
-                const initialVNode = await res.json();
-                renderTree(initialVNode);
+            try {
+                const res = await fetch("/vdom?path=" + initialPath, {
+                    headers: { "X-Session-Id": sid }
+                });
+                syncSessionId(res);
+                if (res.ok) {
+                    const initialVNode = await res.json();
+                    renderTree(initialVNode);
+                }
+            } catch (err) {
+                console.warn("Initial HTTP VDOM fetch failed:", err);
             }
+            connectWebSocket();
         }
 
         async function switchLocale(newLocale) {
             try {
-                const sid = getSessionId();
-                const res = await fetch("/locale", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-Session-Id": sid
-                    },
-                    body: JSON.stringify({ locale: newLocale })
-                });
-                syncSessionId(res);
-                if (res.ok) {
-                    const nextVNode = await res.json();
-                    renderTree(nextVNode);
+                if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "locale", locale: newLocale }));
+                } else {
+                    const sid = getSessionId();
+                    const res = await fetch("/locale", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Session-Id": sid
+                        },
+                        body: JSON.stringify({ locale: newLocale })
+                    });
+                    syncSessionId(res);
+                    if (res.ok) {
+                        const nextVNode = await res.json();
+                        renderTree(nextVNode);
+                    }
                 }
             } catch (err) {
                 console.error("Locale switch failed:", err);
             }
         }
 
+        setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "ping" }));
+            }
+        }, 30000);
+
         window.keet = {
             navigateTo,
             switchLocale,
-            getSessionId
+            getSessionId,
+            getWebSocket: () => ws,
+            isWebSocketConnected: () => wsConnected
         };
 
         window.addEventListener("popstate", () => {
@@ -1700,13 +1969,61 @@ namespace UIEngine {
         }
     }
 
+    Event parseEventFromJson(const HTTPServer::Json::Object& obj) { // Extract UIEngine::Event fields from parsed JSON object
+        Event event;
+        if (obj.contains("type") && obj.at("type").isString()) {
+            event.type = obj.at("type").asString();
+        }
+        if (obj.contains("value") && obj.at("value").isString()) {
+            event.value = obj.at("value").asString();
+        }
+        if (obj.contains("form") && obj.at("form").isObject()) {
+            for (const auto& [field, val] : obj.at("form").asObject()) {
+                if (val.isString()) {
+                    event.form[field] = val.asString();
+                }
+            }
+        }
+        if (obj.contains("key") && obj.at("key").isString()) {
+            event.key = obj.at("key").asString();
+        }
+        if (obj.contains("keyCode") && obj.at("keyCode").isNumber()) {
+            event.keyCode = static_cast<int>(obj.at("keyCode").asNumber());
+        }
+        if (obj.contains("code") && obj.at("code").isString()) {
+            event.code = obj.at("code").asString();
+        }
+        if (obj.contains("checked") && obj.at("checked").isBool()) {
+            event.checked = obj.at("checked").asBool();
+        }
+        if (obj.contains("clientX") && obj.at("clientX").isNumber()) {
+            event.clientX = obj.at("clientX").asNumber();
+        }
+        if (obj.contains("clientY") && obj.at("clientY").isNumber()) {
+            event.clientY = obj.at("clientY").asNumber();
+        }
+        if (obj.contains("altKey") && obj.at("altKey").isBool()) {
+            event.altKey = obj.at("altKey").asBool();
+        }
+        if (obj.contains("ctrlKey") && obj.at("ctrlKey").isBool()) {
+            event.ctrlKey = obj.at("ctrlKey").asBool();
+        }
+        if (obj.contains("shiftKey") && obj.at("shiftKey").isBool()) {
+            event.shiftKey = obj.at("shiftKey").asBool();
+        }
+        if (obj.contains("metaKey") && obj.at("metaKey").isBool()) {
+            event.metaKey = obj.at("metaKey").asBool();
+        }
+        return event;
+    }
+
     void serveApp(
         HTTPServer::Server& frontend,
         std::function<VNode()> rootFactory,
         const StyleSheet &styleSheet,
         std::string apiBaseUrl,
         const std::string &pageTitle
-    ) { // Register "/", "/styles.css", "/vdom", "/navigate", and "/event" routes on the frontend server to serve the C++ VDOM app
+    ) { // Register "/", "/styles.css", "/vdom", "/navigate", "/locale", "/event", and "/ws" routes on the frontend server
         configuredApiBaseUrl = std::move(apiBaseUrl); // Store the configured backend base URL for UIEngine::fetch
         const std::string htmlShell = buildHtmlShell(pageTitle); // Pre-build the minimal HTML shell
 
@@ -1722,9 +2039,36 @@ namespace UIEngine {
             // Initial harvest dry-run can fail if components expect session context; styles will be harvested on first renderRootVNode pass
         }
 
-        const auto serveHtmlShell = [htmlShell](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Serve the HTML shell for GET / and any SPA client-side route
+        auto setupSessionPusher = [&frontend, rootFactory](const std::shared_ptr<Session>& s) {
+            std::lock_guard lock(s->mutex);
+            s->server = &frontend;
+            if (!s->renderPusher) {
+                s->renderPusher = [s, rootFactory, &frontend]() {
+                    SessionContext sessionCtx(s);
+                    const HTTPServer::Json vdomJson = renderRootVNode(rootFactory);
+                    const HTTPServer::Json msg = HTTPServer::Json::Object{
+                        {"type", "vdom"},
+                        {"vdom", vdomJson},
+                        {"path", currentPath()},
+                        {"locale", currentLocale()}
+                    };
+                    const std::string text = msg.dump();
+                    std::vector<int> targets;
+                    {
+                        std::lock_guard lk(s->mutex);
+                        targets.assign(s->wsFds.begin(), s->wsFds.end());
+                    }
+                    for (const int targetFd : targets) {
+                        frontend.sendWebSocketText(targetFd, text);
+                    }
+                };
+            }
+        };
+
+        const auto serveHtmlShell = [htmlShell, setupSessionPusher](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Serve the HTML shell for GET / and any SPA client-side route
             const std::string sessionId = HTTPServer::extractOrCreateSessionId(req);
             const auto session = SessionManager::instance().getOrCreateSession(sessionId);
+            setupSessionPusher(session);
             SessionContext sessionCtx(session);
 
             std::string activeLoc;
@@ -1755,9 +2099,10 @@ namespace UIEngine {
             res.body = Detail::getMergedCss();
         });
 
-        frontend.get("/vdom", [rootFactory](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Serve the live serialized VNode JSON tree at GET /vdom
+        frontend.get("/vdom", [rootFactory, setupSessionPusher](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Serve the live serialized VNode JSON tree at GET /vdom
             const std::string sessionId = HTTPServer::extractOrCreateSessionId(req);
             const auto session = SessionManager::instance().getOrCreateSession(sessionId);
+            setupSessionPusher(session);
             SessionContext sessionCtx(session);
 
             std::string activeLoc;
@@ -1781,9 +2126,10 @@ namespace UIEngine {
             HTTPServer::Server::sendJson(res, HTTP_OK, vdomJson);
         });
 
-        frontend.post("/navigate", [rootFactory](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Switch the active client-side route without resetting session state and return the re-rendered VNode tree
+        frontend.post("/navigate", [rootFactory, setupSessionPusher](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Switch the active client-side route without resetting session state and return the re-rendered VNode tree
             const std::string sessionId = HTTPServer::extractOrCreateSessionId(req);
             const auto session = SessionManager::instance().getOrCreateSession(sessionId);
+            setupSessionPusher(session);
             SessionContext sessionCtx(session);
 
             const HTTPServer::Json payload = HTTPServer::Json::parse(req.body);
@@ -1791,6 +2137,7 @@ namespace UIEngine {
                 navigate(payload.asObject().at("path").asString());
             }
 
+            session->pushRender();
             const HTTPServer::Json vdomJson = renderRootVNode(rootFactory);
             res.setHeader("X-Session-Id", sessionId);
             res.setHeader("X-Route-Path", currentPath());
@@ -1798,9 +2145,10 @@ namespace UIEngine {
             HTTPServer::Server::sendJson(res, HTTP_OK, vdomJson);
         });
 
-        frontend.post("/locale", [rootFactory](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Switch the active session locale, update cookie, and return the re-rendered VNode tree
+        frontend.post("/locale", [rootFactory, setupSessionPusher](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Switch the active session locale, update cookie, and return the re-rendered VNode tree
             const std::string sessionId = HTTPServer::extractOrCreateSessionId(req);
             const auto session = SessionManager::instance().getOrCreateSession(sessionId);
+            setupSessionPusher(session);
             SessionContext sessionCtx(session);
 
             std::string newLocale;
@@ -1815,6 +2163,7 @@ namespace UIEngine {
                 setLocale(newLocale);
             }
 
+            session->pushRender();
             const std::string active = currentLocale();
             const HTTPServer::Json vdomJson = renderRootVNode(rootFactory);
             res.setHeader("X-Session-Id", sessionId);
@@ -1824,9 +2173,10 @@ namespace UIEngine {
             HTTPServer::Server::sendJson(res, HTTP_OK, vdomJson);
         });
 
-        frontend.post("/event", [factory = std::move(rootFactory)](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Dispatch a browser event to its C++ EventHandler and return the re-rendered VNode tree
+        frontend.post("/event", [rootFactory, setupSessionPusher](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Dispatch a browser event to its C++ EventHandler and return the re-rendered VNode tree
             const std::string sessionId = HTTPServer::extractOrCreateSessionId(req);
             const auto session = SessionManager::instance().getOrCreateSession(sessionId);
+            setupSessionPusher(session);
             SessionContext sessionCtx(session);
             res.setHeader("X-Session-Id", sessionId);
 
@@ -1838,51 +2188,7 @@ namespace UIEngine {
 
             const HTTPServer::Json::Object& obj = payload.asObject();
             const std::string handlerId = obj.at("handlerId").asString();
-
-            Event event;
-            if (obj.contains("type") && obj.at("type").isString()) {
-                event.type = obj.at("type").asString();
-            }
-            if (obj.contains("value") && obj.at("value").isString()) {
-                event.value = obj.at("value").asString();
-            }
-            if (obj.contains("form") && obj.at("form").isObject()) {
-                for (const auto& [field, val] : obj.at("form").asObject()) {
-                    if (val.isString()) {
-                        event.form[field] = val.asString();
-                    }
-                }
-            }
-            if (obj.contains("key") && obj.at("key").isString()) {
-                event.key = obj.at("key").asString();
-            }
-            if (obj.contains("keyCode") && obj.at("keyCode").isNumber()) {
-                event.keyCode = static_cast<int>(obj.at("keyCode").asNumber());
-            }
-            if (obj.contains("code") && obj.at("code").isString()) {
-                event.code = obj.at("code").asString();
-            }
-            if (obj.contains("checked") && obj.at("checked").isBool()) {
-                event.checked = obj.at("checked").asBool();
-            }
-            if (obj.contains("clientX") && obj.at("clientX").isNumber()) {
-                event.clientX = obj.at("clientX").asNumber();
-            }
-            if (obj.contains("clientY") && obj.at("clientY").isNumber()) {
-                event.clientY = obj.at("clientY").asNumber();
-            }
-            if (obj.contains("altKey") && obj.at("altKey").isBool()) {
-                event.altKey = obj.at("altKey").asBool();
-            }
-            if (obj.contains("ctrlKey") && obj.at("ctrlKey").isBool()) {
-                event.ctrlKey = obj.at("ctrlKey").asBool();
-            }
-            if (obj.contains("shiftKey") && obj.at("shiftKey").isBool()) {
-                event.shiftKey = obj.at("shiftKey").asBool();
-            }
-            if (obj.contains("metaKey") && obj.at("metaKey").isBool()) {
-                event.metaKey = obj.at("metaKey").asBool();
-            }
+            const Event event = parseEventFromJson(obj);
 
             EventHandler targetHandler;
             {
@@ -1905,7 +2211,8 @@ namespace UIEngine {
                     HTTPServer::Server::sendJson(res, HTTP_INTERNAL_SERVER_ERROR, HTTPServer::Json::Object{{"error", "Unknown handler error occurred"}});
                     return;
                 }
-                const HTTPServer::Json vdomJson = renderRootVNode(factory);
+                session->pushRender();
+                const HTTPServer::Json vdomJson = renderRootVNode(rootFactory);
                 const std::string active = currentLocale();
                 res.setHeader("X-Route-Path", currentPath());
                 res.setHeader("X-Locale", active);
@@ -1916,6 +2223,135 @@ namespace UIEngine {
                 HTTPServer::Server::sendJson(res, HTTP_NOT_FOUND, HTTPServer::Json::Object{{"error", "Unknown or expired handler ID"}});
             }
         });
+
+        // Register persistent WebSocket endpoint at /ws
+        HTTPServer::WebSocketHandlers wsHandlers;
+
+        wsHandlers.onOpen = [rootFactory, &frontend, setupSessionPusher](const int fd, const HTTPServer::ServerRequest& req) {
+            std::string sessionId;
+            if (req.hasQuery("sessionId")) {
+                sessionId = req.getQuery("sessionId");
+            } else if (req.hasQuery("session")) {
+                sessionId = req.getQuery("session");
+            } else {
+                sessionId = HTTPServer::extractOrCreateSessionId(req);
+            }
+
+            const auto session = SessionManager::instance().getOrCreateSession(sessionId);
+            setupSessionPusher(session);
+            session->bindWebSocket(fd, &frontend);
+            SessionManager::instance().bindSessionFd(fd, sessionId);
+
+            const HTTPServer::Json initMsg = HTTPServer::Json::Object{
+                {"type", "init"},
+                {"sessionId", sessionId},
+                {"path", session->currentPath},
+                {"locale", session->locale}
+            };
+            frontend.sendWebSocketText(fd, initMsg.dump());
+        };
+
+        wsHandlers.onMessage = [rootFactory, &frontend, setupSessionPusher](const int fd, const std::string& message) {
+            const auto session = SessionManager::instance().getSessionByFd(fd);
+            if (!session) {
+                return;
+            }
+
+            setupSessionPusher(session);
+            const HTTPServer::Json payload = HTTPServer::Json::parse(message);
+            if (!payload.isObject()) {
+                return;
+            }
+            const auto& obj = payload.asObject();
+            const std::string type = obj.contains("type") && obj.at("type").isString() ? obj.at("type").asString() : "";
+
+            SessionContext sessionCtx(session);
+            session->touch();
+
+            if (type == "event") {
+                if (!obj.contains("handlerId") || !obj.at("handlerId").isString()) {
+                    const HTTPServer::Json err = HTTPServer::Json::Object{
+                        {"type", "error"},
+                        {"error", "Missing handlerId"}
+                    };
+                    frontend.sendWebSocketText(fd, err.dump());
+                    return;
+                }
+                const std::string handlerId = obj.at("handlerId").asString();
+
+                const Event event = parseEventFromJson(obj);
+                EventHandler targetHandler;
+                {
+                    std::lock_guard lock(session->mutex);
+                    const auto it = session->handlerRegistry.find(handlerId);
+                    if (it != session->handlerRegistry.end()) {
+                        targetHandler = it->second;
+                    }
+                }
+
+                if (targetHandler) {
+                    try {
+                        targetHandler(event);
+                    } catch (const std::exception& ex) {
+                        const HTTPServer::Json err = HTTPServer::Json::Object{
+                            {"type", "error"},
+                            {"error", std::string("Handler error: ") + ex.what()}
+                        };
+                        frontend.sendWebSocketText(fd, err.dump());
+                        return;
+                    } catch (...) {
+                        const HTTPServer::Json err = HTTPServer::Json::Object{
+                            {"type", "error"},
+                            {"error", "Unknown handler error occurred"}
+                        };
+                        frontend.sendWebSocketText(fd, err.dump());
+                        return;
+                    }
+
+                    session->pushRender();
+                } else {
+                    const HTTPServer::Json err = HTTPServer::Json::Object{
+                        {"type", "error"},
+                        {"error", "Unknown or expired handler ID"}
+                    };
+                    frontend.sendWebSocketText(fd, err.dump());
+                }
+            } else if (type == "navigate") {
+                if (obj.contains("path") && obj.at("path").isString()) {
+                    navigate(obj.at("path").asString());
+                }
+                session->pushRender();
+            } else if (type == "locale") {
+                if (obj.contains("locale") && obj.at("locale").isString()) {
+                    setLocale(obj.at("locale").asString());
+                }
+                session->pushRender();
+            } else if (type == "sync" || type == "vdom") {
+                const HTTPServer::Json vdomJson = renderRootVNode(rootFactory);
+                const HTTPServer::Json resp = HTTPServer::Json::Object{
+                    {"type", "vdom"},
+                    {"vdom", vdomJson},
+                    {"path", currentPath()},
+                    {"locale", currentLocale()}
+                };
+                frontend.sendWebSocketText(fd, resp.dump());
+            } else if (type == "ping") {
+                const HTTPServer::Json resp = HTTPServer::Json::Object{
+                    {"type", "pong"}
+                };
+                frontend.sendWebSocketText(fd, resp.dump());
+            }
+        };
+
+        wsHandlers.onClose = [](const int fd, const uint16_t, const std::string&) {
+            SessionManager::instance().unbindSessionFd(fd);
+        };
+
+        wsHandlers.onError = [](const int fd, const std::string&) {
+            SessionManager::instance().unbindSessionFd(fd);
+        };
+
+        frontend.websocket("/ws", std::move(wsHandlers));
     }
 
     namespace Tags {
