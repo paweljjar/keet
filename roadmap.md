@@ -116,7 +116,7 @@
         - 1.2: Establish a lightweight local reload channel between `keety` and the running frontend server.
         - 1.3: Display in-browser compile diagnostics and syntax error toast overlays when `.keet` parsing fails.
     - **Phase 2: Dynamic Template Reloading & State-Preserving VDOM Patching**
-        - 2.1: Implement dynamic component loading or template recompilation to update component rendering trees on the fly.
+        - 2.1: Implement dynamic component reloading via shared library hot-swapping (`dlopen` / `LoadLibrary`) or fast template evaluation to update component rendering trees on the fly without full binary relinking.
         - 2.2: Broadcast re-render notifications across active browser sessions and stream surgical VNode patches over the live client transport.
         - 2.3: Preserve component state values (`useState`) and active session scopes across hot reloads.
 
@@ -134,4 +134,90 @@
         - 2.2: Implement named slot distribution (e.g., `<template slot="header">`, `<template slot="footer">`) projecting matching child trees into corresponding designated slots.
         - 2.3: Ensure scoped CSS rules declared on projected slot children and parent containers are harvested and scoped correctly.
 
+---
 
+## Feature 10: Automatic Missing Key Translation Provider & Self-Populating Locales
+- **Description:** An extensible background localization service that intercepts unlocalized or missing catalog keys at runtime during component evaluation. Rather than falling back to an English default permanently, the provider captures the requested key, returns an immediate non-blocking fallback string to preserve 60fps frame rates, and dispatches an asynchronous background task using `UIEngine::fetchAsync` (for cloud backends like DeepL/LibreTranslate) or local embedded neural translation engines (e.g., Mozilla Bergamot / ONNX Runtime). Once resolved, the newly translated strings are dynamically added to the in-memory catalog, persisted back to the target disk catalog (`locales/<target-locale>.json`), and reconciled across active sessions without requiring full server restarts.
+- **Phases:**
+    - **Phase 1: Translation Provider Abstraction & Asynchronous Queue**
+        - 1.1: Define an abstract `ITranslationProvider` interface in `keet/Localization.h` with support for cloud endpoints and embedded neural backends.
+        - 1.2: Implement a lock-free, prioritized task queue in `Localization.cpp` that batches missing translation requests without blocking the synchronous render thread or accept loop.
+        - 1.3: Integrate zero-stall frame fallbacks: when `__("missing_key")` is evaluated, the active language-tag fallback is returned for the current frame while enqueueing the background translation request.
+    - **Phase 2: Disk Auto-Persistence & Session Reconciliation**
+        - 2.1: Implement automatic atomic file flushing (`std::filesystem::rename` write-swap) to serialize newly acquired translations directly into `locales/<target-locale>.json` on disk.
+        - 2.2: Add session-level invalidation hooks that trigger `UIEngine::renderRootVNode()` across all connected sessions subscribed to the updated locale once a translation completes.
+        - 2.3: Provide developer configuration flags in `<server>` and C++ (`autoTranslate: true`, `translationService: "libretranslate"`, `rateLimit: 10/s`).
+
+---
+
+## Feature 11: Native Desktop & Mobile Packaging (`dmstct-keety`) 🏠🐱
+- **Description:** A dedicated standalone packaging and distribution tool that "domesticates" web-based Keet full-stack applications into true, standalone native desktop executables (macOS `.app`, Windows `.exe`, Linux AppImage/deb). Instead of bundling heavy Chromium and Node.js runtimes (like Electron, which requires 150MB+ disk and 80MB+ idle RAM), `dmstct-keety` links a lightweight C++ system webview bridge (WebKit on macOS/iOS, WebView2 on Windows, WebKitGTK on Linux) directly to Keet's native C++ application core. The entire full-stack app—database, HTTP/WebSocket worker thread pool, and UI—launches in under 100ms, consumes less than 10MB of idle RAM, and produces a single self-contained binary under 5MB.
+- **Phases:**
+    - **Phase 1: Native System Webview Window Harness**
+        - 1.1: Integrate a lightweight, zero-dependency C++ system webview windowing wrapper (Cocoa/WebKit on macOS, Edge WebView2 on Windows, WebKitGTK on Linux).
+        - 1.2: Bind the native window lifecycle directly to the embedded Keet engine using direct in-memory IPC and custom WebView URI schemes / native message handlers (`WKScriptMessageHandler` on macOS, `WebMessageReceived` on WebView2) to avoid local firewall prompts and TCP loopback overhead, with fallback to ephemeral loopback sockets (`127.0.0.1:<random-port>`).
+        - 1.3: Handle graceful window closing events and signal traps (`SIGINT`, `SIGTERM`), ensuring database transactions and thread pool tasks drain cleanly before terminating.
+    - **Phase 2: `dmstct-keety` CLI Bundler & Build Tooling**
+        - 2.1: Build the standalone `dmstct-keety` CLI tool supporting `package`, `build`, and `run` commands targeting macOS, Windows, and Linux.
+        - 2.2: Implement automated application bundling pipelines generating macOS application bundles (`.app` with `Info.plist`, PkgInfo, and `.icns`), Windows PE executables with `.ico` resources, and standalone Linux AppImage files.
+        - 2.3: Provide seamless CMake build targets (`keet_add_desktop_app(target_name App.keet)`) to automate compilation and bundling directly from CMake.
+    - **Phase 3: Native Desktop Hardware & OS Integrations**
+        - 3.1: Expose native system file picker dialogs, message boxes, and folder selection directly into `<script>` without third-party webview plugins.
+        - 3.2: Implement system tray and menu bar integration with minimize-to-tray, status badge icons, and customizable native context menus.
+        - 3.3: Add native desktop push notification support (`NSUserNotification` on macOS, Windows Action Center toast notifications, `libnotify` on Linux).
+
+---
+
+## Feature 12: Declarative Multi-Page Router & URL State Synchronization (`keet/Router.h`)
+- **Description:** Introduces first-class, server-driven routing and URL state management to Keet applications. Enables declarative route matching (`<Router>`, `<Route path="/users/:id" />`, `<Link to="/settings" />`) inside `.keet` templates while synchronizing navigation state with the browser's History API (`pushState` / `popstate`). Supports dynamic path parameters, query string binding, nested layout routes, and programmatic navigation without full-page reloads.
+- **Phases:**
+    - **Phase 1: Core Routing Engine & Session Route State**
+        - 1.1: Implement `Router` and `RouteMatch` in `keet/Router.h` supporting static paths, named parameters (`:id`), wildcard segments (`*`), and query parameter parsing.
+        - 1.2: Store current URL path, matched parameters, and query map inside each `Session` instance, exposing ergonomic helpers (`useRoute()`, `navigate("/path")`) to components.
+        - 1.3: Handle initial HTTP GET deep-linking on the frontend server so direct browser refreshes on nested routes (e.g., `/projects/42/settings`) render the corresponding component tree immediately.
+    - **Phase 2: Client History API Integration & KeetScript Routing Directives**
+        - 2.1: Upgrade the client JS runtime to intercept `<Link>` clicks and `popstate` events, dispatching lightweight route-change events to the server and updating the browser URL bar via `history.pushState`.
+        - 2.2: Add built-in `<Router>`, `<Route>`, and `<Link>` support to `keety` with compile-time route path validation.
+        - 2.3: Support reactive query parameter binding (`bind:query="searchQuery"`) to synchronize component state variables directly with URL search parameters.
+
+---
+
+## Feature 13: Built-in Authentication, Session Persistence & Security Guards
+- **Description:** Elevates Keet's in-memory session subsystem into a production-ready authentication and security layer. Provides persistent SQLite-backed session storage, cryptographic password hashing and token utilities, automatic CSRF protection on state-mutating requests, and declarative route/component authorization guards (`@authenticated`, `@role("admin")`) across both `<server>` endpoints and `<template>` views.
+- **Phases:**
+    - **Phase 1: Persistent Session Store & Cryptographic Utilities**
+        - 1.1: Abstract session storage behind `ISessionStore` with a built-in SQLite-backed implementation (`SqliteSessionStore`) supporting automatic expiration, sliding TTLs, and server restarts without logging users out.
+        - 1.2: Provide zero-dependency cryptographic helpers in `keet/Auth.h` for password hashing, secure random session ID generation, and HMAC token signing (`HttpOnly`, `Secure`, `SameSite` cookies).
+        - 1.3: Implement automatic CSRF token generation and verification for HTTP POST events and REST mutations.
+    - **Phase 2: Declarative Auth Guards in `<server>` & `<script>`**
+        - 2.1: Extend `<server>` route grammar with declarative security annotations (`@authenticated`, `@role("admin")`, `@rate_limit(60/m)`) compiled directly into route middleware checks.
+        - 2.2: Expose `Auth::currentUser()` and `Auth::login()` / `Auth::logout()` primitives inside component `<script>` blocks and backend handlers.
+        - 2.3: Support conditional auth rendering and automatic login redirect rules on protected routes.
+
+---
+
+## Feature 14: Schema-Driven Form Validation & Reactive Model Binding
+- **Description:** Bridges `<server>` database table schemas and `<template>` form inputs to eliminate boilerplate validation logic. Allows `keety` to derive both client-side HTML5 validation attributes and strict server-side validation rules directly from table constraints or explicit `<script>` validation schemas, providing instant field-level error feedback and type-safe form submission handlers.
+- **Phases:**
+    - **Phase 1: Validation Rules Engine & Schema Derivation**
+        - 1.1: Define `Validator` primitives in `keet/Validation.h` supporting constraints such as `required`, `min_length`, `max_length`, `pattern`, `email`, and custom predicates.
+        - 1.2: Extend `keety` to automatically synthesize `Validator` schemas from `<server>` table declarations and explicit `<script>` model definitions.
+        - 1.3: Automatically emit corresponding HTML5 input attributes (`required`, `minlength`, `maxlength`, `pattern`, `type`) on bound `<input>` elements during AOT compilation.
+    - **Phase 2: Reactive Error State & Form Submission Lifecycle**
+        - 2.1: Add structured form binding directives (`onSubmit`, `bind:form`, `errors.fieldName`) to `<template>` and `<script>`.
+        - 2.2: Automatically validate incoming form payloads before executing component or backend mutation logic, populating field-level localized error messages on failure.
+        - 2.3: Support optimistic UI dirty/submitting states (`form.isSubmitting`, `form.isValid`) during asynchronous server round-trips.
+
+---
+
+## Feature 15: Headless Component & Full-Stack Testing Harness (`keet test`)
+- **Description:** Provides a fast, zero-browser testing framework for `.keet` components and `<server>` endpoints. Developers can mount components headlessly in native C++, simulate user interactions (`click`, `input`, `submit`), inspect rendered VNode trees and scoped styles, and run isolated in-memory SQLite integration tests in milliseconds via a unified `keet test` CLI runner.
+- **Phases:**
+    - **Phase 1: Headless VDOM Test Renderer & Event Simulator (`keet/Testing.h`)**
+        - 1.1: Implement `TestHarness::mount<Component>(props)` to instantiate and render components into an inspectable VNode tree without starting an HTTP socket listener.
+        - 1.2: Add CSS-selector-like VNode query helpers (`find(".btn-primary")`, `findAll("li")`, `text()`) and assertion macros (`KEET_ASSERT_TEXT`, `KEET_ASSERT_ATTR`).
+        - 1.3: Provide synthetic event dispatchers (`triggerClick()`, `triggerInput("value")`) that invoke bound C++ lambdas and re-render the virtual tree synchronously.
+    - **Phase 2: Full-Stack Integration Testing & `keet test` CLI**
+        - 2.1: Support ephemeral `:memory:` SQLite database provisioning and mock `Session` contexts for end-to-end `<server>` route and component integration tests.
+        - 2.2: Extend `keety` / CMake (`keet_add_test()`) to compile and execute `.test.keet` and C++ test suites with formatted console reporting.
+        - 2.3: Add VNode snapshot testing (`assertMatchesSnapshot()`) to detect unintended UI markup or scoped CSS regressions.
