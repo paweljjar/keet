@@ -152,6 +152,8 @@ namespace UIEngine {
     };
 
     class Component; // Forward declaration for Component-scoped State handles and lifecycle hooks
+    class StyleSheet; // Forward declaration for component stylesheets
+    struct VNode; // Forward declaration for Virtual DOM node
 
     namespace Detail { // Internal state store and lifecycle helpers backing persistent UIEngine::State<T> and Component instances across renders
         void pushScope(std::string scopeName); // Push a component scope identifier onto the thread-local scope stack
@@ -164,6 +166,13 @@ namespace UIEngine {
         void registerComponentMount(const std::string& key, Component& comp, std::function<void()> unmountFn); // Record component in current render pass and invoke onMount() if newly mounted
         bool reconcileUnmountedComponents(); // Invoke onUnmount() and clean up scoped state for components that disappeared in the latest render pass
         void unmountAllComponents(Session& session); // Invoke onUnmount() for all mounted components in the given session and clear its lifecycle registry
+
+        void registerComponentStyles(const std::string& scopeKey, StyleSheet styles); // Register a component's declared stylesheet in the active style registry
+        void harvestStylesFromTree(const VNode& node, StyleSheet& collected); // Recursively traverse a VNode tree and collect all attached stylesheets
+        void registerTreeStyles(const StyleSheet& styles); // Merge newly discovered tree styles into the global style registry
+        void setBaseStyleSheet(StyleSheet sheet); // Configure base application stylesheet passed to serveApp()
+        [[nodiscard]] std::string getMergedCss(); // Generate or return cached merged CSS including base styles and harvested component styles
+        void clearHarvestedStyles(); // Clear harvested component styles
 
         class ComponentScopeGuard { // RAII guard pushing and popping a component scope during rendering
             public:
@@ -213,9 +222,14 @@ namespace UIEngine {
             StyleSheet() = default; // Default constructor creating an empty stylesheet
 
             StyleSheet& rule(std::string selector, StyleDeclarations declarations); // Add or merge CSS declarations for a given CSS selector
+            [[deprecated("Manual StyleSheet::merge() is deprecated; component styles() are now automatically harvested across the component tree")]]
             void merge(const StyleSheet& other); // Merge all rules from another StyleSheet into this one
+            void appendRules(const StyleSheet& other); // Internal non-deprecated helper to merge rules without deprecation warnings
             [[nodiscard]] bool empty() const; // Check whether the stylesheet contains any rules
             [[nodiscard]] std::string toCss() const; // Serialize all rules and declarations into a valid CSS string
+            [[nodiscard]] StyleSheet scoped(const std::string& scopeId) const; // Return a copy of this stylesheet with all selectors scoped to scopeId
+            [[nodiscard]] std::string toScopedCss(const std::string& scopeId) const; // Serialize rules rewritten with component scope attribute selector
+            [[nodiscard]] const std::vector<std::pair<std::string, StyleDeclarations>>& rules() const { return _rules; } // Return underlying selector rules
 
         private:
             std::vector<std::pair<std::string, StyleDeclarations>> _rules; // Ordered list of CSS selector rules preserving insertion order
@@ -227,10 +241,11 @@ namespace UIEngine {
         std::string text; // Text content used when tag is "#text"
         std::vector<VNode> children; // Ordered list of child Virtual DOM nodes
         std::string key = ""; // Optional unique reconciliation key for keyed DOM diffing
+        std::shared_ptr<StyleSheet> styles = nullptr; // Optional stylesheet attached to this component/node
 
         VNode() = default; // Default constructor creating an empty VNode
-        VNode(std::string tag, Props props, std::string text, std::vector<VNode> children, std::string key = "")
-            : tag(std::move(tag)), props(std::move(props)), text(std::move(text)), children(std::move(children)), key(std::move(key)) {} // Construct a VNode from tag, props, text, children, and optional key
+        VNode(std::string tag, Props props, std::string text, std::vector<VNode> children, std::string key = "", std::shared_ptr<StyleSheet> styles = nullptr)
+            : tag(std::move(tag)), props(std::move(props)), text(std::move(text)), children(std::move(children)), key(std::move(key)), styles(std::move(styles)) {} // Construct a VNode from tag, props, text, children, key, and optional styles
 
         template <typename CompT>
         requires (std::derived_from<std::decay_t<CompT>, Component> && !std::same_as<std::decay_t<CompT>, Component>)
@@ -299,6 +314,15 @@ namespace UIEngine {
         if (node.key.empty()) {
             node.key = key;
         }
+        if (node.tag != "#text") {
+            node.props["data-keet-scope"] = key;
+        }
+        StyleSheet compStyles = instanceCopy->styles();
+        if (!compStyles.empty()) {
+            StyleSheet scopedStyles = compStyles.scoped(key);
+            node.styles = std::make_shared<StyleSheet>(scopedStyles);
+            Detail::registerComponentStyles(key, std::move(scopedStyles));
+        }
         return node;
     }
 
@@ -341,7 +365,7 @@ namespace UIEngine {
         std::string pageTitle = "App"
     ) {
         StyleSheet combinedStyles = rootComponent.styles(); // Start with styles declared on the root component
-        combinedStyles.merge(styleSheet); // Merge any additional global stylesheet rules passed to serveApp
+        combinedStyles.appendRules(styleSheet); // Merge any additional global stylesheet rules passed to serveApp
         serveApp(
             frontend,
             [comp = std::move(rootComponent)]() mutable {

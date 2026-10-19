@@ -144,6 +144,11 @@ namespace UIEngine {
                 } catch (...) {
                     rootNode = createErrorBoundaryNode("An unknown render error occurred");
                 }
+                StyleSheet treeStyles;
+                Detail::harvestStylesFromTree(rootNode, treeStyles);
+                if (!treeStyles.empty()) {
+                    Detail::registerTreeStyles(treeStyles);
+                }
                 if (Detail::reconcileUnmountedComponents()) {
                     Detail::resetRenderContext();
                     session->handlerRegistry.clear();
@@ -154,6 +159,11 @@ namespace UIEngine {
                         rootNode = createErrorBoundaryNode(e.what());
                     } catch (...) {
                         rootNode = createErrorBoundaryNode("An unknown render error occurred");
+                    }
+                    StyleSheet reconciledStyles;
+                    Detail::harvestStylesFromTree(rootNode, reconciledStyles);
+                    if (!reconciledStyles.empty()) {
+                        Detail::registerTreeStyles(reconciledStyles);
                     }
                     Detail::reconcileUnmountedComponents();
                 }
@@ -170,6 +180,11 @@ namespace UIEngine {
             } catch (...) {
                 rootNode = createErrorBoundaryNode("An unknown render error occurred");
             }
+            StyleSheet fallbackTreeStyles;
+            Detail::harvestStylesFromTree(rootNode, fallbackTreeStyles);
+            if (!fallbackTreeStyles.empty()) {
+                Detail::registerTreeStyles(fallbackTreeStyles);
+            }
             if (Detail::reconcileUnmountedComponents()) {
                 Detail::resetRenderContext();
                 fallbackHandlerRegistry.clear();
@@ -180,6 +195,11 @@ namespace UIEngine {
                     rootNode = createErrorBoundaryNode(e.what());
                 } catch (...) {
                     rootNode = createErrorBoundaryNode("An unknown render error occurred");
+                }
+                StyleSheet reconciledFallbackStyles;
+                Detail::harvestStylesFromTree(rootNode, reconciledFallbackStyles);
+                if (!reconciledFallbackStyles.empty()) {
+                    Detail::registerTreeStyles(reconciledFallbackStyles);
                 }
                 Detail::reconcileUnmountedComponents();
             }
@@ -674,6 +694,132 @@ namespace UIEngine {
             std::lock_guard lock(fallbackStateMutex);
             fallbackStateStore[key] = std::move(value);
         }
+
+        namespace {
+            std::mutex harvestedStylesMutex; // Mutex guarding dynamic harvested style registries and CSS cache
+            StyleSheet baseAppStyleSheet; // Base application stylesheet supplied via serveApp
+            std::map<std::string, StyleSheet> registeredComponentStyles; // Map of component scope keys to their declared styles
+            std::vector<StyleSheet> treeHarvestedStyles; // Additional stylesheets collected from VNode trees
+            std::string cachedMergedCss; // Serialized cached CSS document
+            bool styleCacheDirty = true; // True if cached CSS must be regenerated
+        }
+
+        void registerComponentStyles(const std::string& scopeKey, StyleSheet styles) { // Register a component's declared stylesheet in the active style registry
+            if (styles.empty()) return;
+            std::lock_guard lock(harvestedStylesMutex);
+            const auto it = registeredComponentStyles.find(scopeKey);
+            if (it != registeredComponentStyles.end() && it->second.rules() == styles.rules()) {
+                return;
+            }
+            registeredComponentStyles[scopeKey] = std::move(styles);
+            styleCacheDirty = true;
+        }
+
+        void harvestStylesFromTree(const VNode& node, StyleSheet& collected) { // Recursively traverse a VNode tree and collect all attached stylesheets
+            if (node.styles && !node.styles->empty()) {
+                collected.appendRules(*node.styles);
+            }
+            for (const auto& child : node.children) {
+                harvestStylesFromTree(child, collected);
+            }
+        }
+
+        void registerTreeStyles(const StyleSheet& styles) { // Merge newly discovered tree styles into the global style registry
+            if (styles.empty()) return;
+            std::lock_guard lock(harvestedStylesMutex);
+            treeHarvestedStyles.push_back(styles);
+            styleCacheDirty = true;
+        }
+
+        void setBaseStyleSheet(StyleSheet sheet) { // Configure base application stylesheet passed to serveApp()
+            std::lock_guard lock(harvestedStylesMutex);
+            baseAppStyleSheet = std::move(sheet);
+            styleCacheDirty = true;
+        }
+
+        std::string getMergedCss() { // Generate or return cached merged CSS including base styles and harvested component styles
+            std::lock_guard lock(harvestedStylesMutex);
+            if (!styleCacheDirty) {
+                return cachedMergedCss;
+            }
+            StyleSheet merged = baseAppStyleSheet;
+            for (const auto& [_, sheet] : registeredComponentStyles) {
+                merged.appendRules(sheet);
+            }
+            for (const auto& sheet : treeHarvestedStyles) {
+                merged.appendRules(sheet);
+            }
+            cachedMergedCss = merged.toCss();
+            styleCacheDirty = false;
+            return cachedMergedCss;
+        }
+
+        void clearHarvestedStyles() { // Clear harvested component styles
+            std::lock_guard lock(harvestedStylesMutex);
+            registeredComponentStyles.clear();
+            treeHarvestedStyles.clear();
+            styleCacheDirty = true;
+        }
+    }
+
+    namespace {
+        std::string trimSelector(const std::string& s) {
+            const size_t start = s.find_first_not_of(" \t\r\n");
+            if (start == std::string::npos) return "";
+            const size_t end = s.find_last_not_of(" \t\r\n");
+            return s.substr(start, end - start + 1);
+        }
+
+        std::string scopeSelector(const std::string& selector, const std::string& scope) {
+            if (scope.empty()) return selector;
+            const std::string sAttr = "[data-keet-scope=\"" + scope + "\"]";
+
+            // Split comma-separated selector lists (ignoring commas inside parens or brackets)
+            std::vector<std::string> parts;
+            std::string current;
+            int parenDepth = 0;
+            int bracketDepth = 0;
+            for (char c : selector) {
+                if (c == '(') parenDepth++;
+                else if (c == ')') parenDepth--;
+                else if (c == '[') bracketDepth++;
+                else if (c == ']') bracketDepth--;
+                else if (c == ',' && parenDepth == 0 && bracketDepth == 0) {
+                    std::string trimmed = trimSelector(current);
+                    if (!trimmed.empty()) parts.push_back(std::move(trimmed));
+                    current.clear();
+                    continue;
+                }
+                current += c;
+            }
+            std::string lastTrimmed = trimSelector(current);
+            if (!lastTrimmed.empty()) parts.push_back(std::move(lastTrimmed));
+
+            std::ostringstream out;
+            for (size_t i = 0; i < parts.size(); ++i) {
+                const std::string& part = parts[i];
+                if (i > 0) out << ", ";
+
+                if (part.starts_with(":global(") && part.ends_with(")")) {
+                    out << trimSelector(part.substr(8, part.size() - 9));
+                    continue;
+                }
+                if (part.find(sAttr) != std::string::npos) {
+                    out << part;
+                    continue;
+                }
+                if (part == ":host" || part == "&") {
+                    out << sAttr;
+                    continue;
+                }
+                if (!part.empty() && part.front() == ':') {
+                    out << sAttr << part;
+                    continue;
+                }
+                out << sAttr << " " << part << ", " << sAttr << part;
+            }
+            return out.str();
+        }
     }
 
     StyleSheet& StyleSheet::rule(std::string selector, StyleDeclarations declarations) { // Add or merge CSS declarations for a given CSS selector
@@ -689,10 +835,14 @@ namespace UIEngine {
         return *this; // Return reference to *this for fluent method chaining
     }
 
-    void StyleSheet::merge(const StyleSheet& other) { // Merge all rules from another StyleSheet into this one
+    void StyleSheet::appendRules(const StyleSheet& other) { // Append and merge rules from another stylesheet
         for (const auto& [selector, declarations] : other._rules) {
             rule(selector, declarations);
         }
+    }
+
+    void StyleSheet::merge(const StyleSheet& other) { // Merge all rules from another StyleSheet into this one (deprecated)
+        appendRules(other);
     }
 
     bool StyleSheet::empty() const { // Check whether the stylesheet contains any rules
@@ -709,6 +859,21 @@ namespace UIEngine {
             css << "}\n\n";
         }
         return css.str();
+    }
+
+    StyleSheet StyleSheet::scoped(const std::string& scopeId) const { // Return a copy of this stylesheet with all selectors scoped to scopeId
+        if (scopeId.empty()) {
+            return *this;
+        }
+        StyleSheet scopedSheet;
+        for (const auto& [selector, declarations] : _rules) {
+            scopedSheet.rule(scopeSelector(selector, scopeId), declarations);
+        }
+        return scopedSheet;
+    }
+
+    std::string StyleSheet::toScopedCss(const std::string& scopeId) const { // Serialize rules rewritten with component scope attribute selector
+        return scoped(scopeId).toCss();
     }
 
     VNode VNode::textNode(std::string content) { // Create a raw text VNode with tag "#text" and the given text content
@@ -729,8 +894,57 @@ namespace UIEngine {
 
     HTTPServer::Json VNode::toJson() const { // Recursively serialize this VNode and its children into an HTTPServer::Json object
         HTTPServer::Json::Object propsObj; // Create a JSON object map to hold this node's HTML attributes and event handler IDs
+
+        std::vector<std::string> classList;
+        std::set<std::string> seenClasses;
+
+        // Collect existing base classes if provided
+        auto baseClassIt = props.find("class");
+        if (baseClassIt == props.end()) {
+            baseClassIt = props.find("className");
+        }
+        if (baseClassIt != props.end() && baseClassIt->second.isString()) {
+            std::istringstream iss(baseClassIt->second.asString());
+            std::string cls;
+            while (iss >> cls) {
+                if (!seenClasses.contains(cls)) {
+                    seenClasses.insert(cls);
+                    classList.push_back(std::move(cls));
+                }
+            }
+        }
+
+        // Evaluate conditional class directives (class:<className>)
+        for (const auto& [propKey, val] : props) {
+            if (propKey.starts_with("class:")) {
+                const std::string className = propKey.substr(6);
+                bool isTruthy = false;
+                if (val.isBool()) {
+                    isTruthy = val.asBool();
+                } else if (val.isString()) {
+                    const std::string& s = val.asString();
+                    isTruthy = !s.empty() && s != "false" && s != "0";
+                }
+                if (isTruthy && !seenClasses.contains(className)) {
+                    seenClasses.insert(className);
+                    classList.push_back(className);
+                }
+                propsObj[propKey] = isTruthy;
+            }
+        }
+
+        // If any classes exist, set the combined "class" property in propsObj
+        if (!classList.empty()) {
+            std::string combinedClass;
+            for (size_t i = 0; i < classList.size(); ++i) {
+                if (i > 0) combinedClass += " ";
+                combinedClass += classList[i];
+            }
+            propsObj["class"] = std::move(combinedClass);
+        }
+
         for (const auto& [propKey, val] : props) { // Iterate through each key-value pair in the VNode's Props map
-            if (propKey == "key") { // Skip reconciliation key if present in props
+            if (propKey == "key" || propKey == "class" || propKey == "className" || propKey.starts_with("class:")) {
                 continue;
             }
             if (val.isString()) {
@@ -831,6 +1045,15 @@ namespace UIEngine {
         VNode node = render();
         if (node.key.empty()) {
             node.key = compKey;
+        }
+        if (node.tag != "#text") {
+            node.props["data-keet-scope"] = compKey;
+        }
+        StyleSheet compStyles = styles();
+        if (!compStyles.empty()) {
+            StyleSheet scopedStyles = compStyles.scoped(compKey);
+            node.styles = std::make_shared<StyleSheet>(scopedStyles);
+            Detail::registerComponentStyles(compKey, std::move(scopedStyles));
         }
         return node;
     }
@@ -1129,6 +1352,9 @@ namespace UIEngine {
                     else if (key === "data-on-keyup") el.onkeyup = null;
                     else if (key === "data-on-focus") el.onfocus = null;
                     else if (key === "data-on-blur") el.onblur = null;
+                    else if (key.startsWith("class:")) {
+                        el.classList.remove(key.slice(6));
+                    }
                     else if (BOOLEAN_PROPS.has(lower) || (lower in el && typeof el[lower] === "boolean")) {
                         const domProp = (lower === "readonly") ? "readOnly" : lower;
                         if (domProp in el) el[domProp] = false;
@@ -1234,6 +1460,14 @@ namespace UIEngine {
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
                         }, el);
                     };
+                } else if (key.startsWith("class:")) {
+                    const className = key.slice(6);
+                    const isTruthy = value === true || value === "true" || (typeof value === "string" && value.length > 0 && value !== "false" && value !== "0");
+                    if (isTruthy) {
+                        el.classList.add(className);
+                    } else {
+                        el.classList.remove(className);
+                    }
                 } else if (!key.startsWith("data-on-")) {
                     const lower = key.toLowerCase();
                     const isBoolProp = BOOLEAN_PROPS.has(lower) || typeof value === "boolean";
@@ -1401,7 +1635,18 @@ namespace UIEngine {
     ) { // Register "/", "/styles.css", "/vdom", "/navigate", and "/event" routes on the frontend server to serve the C++ VDOM app
         configuredApiBaseUrl = std::move(apiBaseUrl); // Store the configured backend base URL for UIEngine::fetch
         const std::string htmlShell = buildHtmlShell(pageTitle); // Pre-build the minimal HTML shell
-        const std::string cssContent = styleSheet.toCss(); // Serialize the C++ StyleSheet into a CSS string
+
+        Detail::setBaseStyleSheet(styleSheet); // Set base application stylesheet
+        try {
+            VNode initialTree = rootFactory();
+            StyleSheet initialStyles;
+            Detail::harvestStylesFromTree(initialTree, initialStyles);
+            if (!initialStyles.empty()) {
+                Detail::registerTreeStyles(initialStyles);
+            }
+        } catch (...) {
+            // Initial harvest dry-run can fail if components expect session context; styles will be harvested on first renderRootVNode pass
+        }
 
         const auto serveHtmlShell = [htmlShell](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Serve the HTML shell for GET / and any SPA client-side route
             const std::string sessionId = HTTPServer::extractOrCreateSessionId(req);
@@ -1420,11 +1665,11 @@ namespace UIEngine {
         frontend.get("/", serveHtmlShell);
         frontend.setFallbackGetHandler(serveHtmlShell);
 
-        frontend.get("/styles.css", [cssContent](const HTTPServer::ServerRequest&, HTTPServer::ServerResponse& res) { // Serve the generated CSS stylesheet at GET /styles.css
+        frontend.get("/styles.css", [](const HTTPServer::ServerRequest&, HTTPServer::ServerResponse& res) { // Serve the dynamically harvested and cached CSS stylesheet at GET /styles.css
             res.status = HTTP_OK;
             res.contentType = "text/css";
             res.charset = "utf-8";
-            res.body = cssContent;
+            res.body = Detail::getMergedCss();
         });
 
         frontend.get("/vdom", [rootFactory](const HTTPServer::ServerRequest& req, HTTPServer::ServerResponse& res) { // Serve the live serialized VNode JSON tree at GET /vdom
