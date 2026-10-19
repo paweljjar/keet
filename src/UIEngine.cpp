@@ -762,6 +762,66 @@ namespace UIEngine {
         }
     }
 
+    namespace {
+        std::string trimSelector(const std::string& s) {
+            const size_t start = s.find_first_not_of(" \t\r\n");
+            if (start == std::string::npos) return "";
+            const size_t end = s.find_last_not_of(" \t\r\n");
+            return s.substr(start, end - start + 1);
+        }
+
+        std::string scopeSelector(const std::string& selector, const std::string& scope) {
+            if (scope.empty()) return selector;
+            const std::string sAttr = "[data-keet-scope=\"" + scope + "\"]";
+
+            // Split comma-separated selector lists (ignoring commas inside parens or brackets)
+            std::vector<std::string> parts;
+            std::string current;
+            int parenDepth = 0;
+            int bracketDepth = 0;
+            for (char c : selector) {
+                if (c == '(') parenDepth++;
+                else if (c == ')') parenDepth--;
+                else if (c == '[') bracketDepth++;
+                else if (c == ']') bracketDepth--;
+                else if (c == ',' && parenDepth == 0 && bracketDepth == 0) {
+                    std::string trimmed = trimSelector(current);
+                    if (!trimmed.empty()) parts.push_back(std::move(trimmed));
+                    current.clear();
+                    continue;
+                }
+                current += c;
+            }
+            std::string lastTrimmed = trimSelector(current);
+            if (!lastTrimmed.empty()) parts.push_back(std::move(lastTrimmed));
+
+            std::ostringstream out;
+            for (size_t i = 0; i < parts.size(); ++i) {
+                const std::string& part = parts[i];
+                if (i > 0) out << ", ";
+
+                if (part.starts_with(":global(") && part.ends_with(")")) {
+                    out << trimSelector(part.substr(8, part.size() - 9));
+                    continue;
+                }
+                if (part.find(sAttr) != std::string::npos) {
+                    out << part;
+                    continue;
+                }
+                if (part == ":host" || part == "&") {
+                    out << sAttr;
+                    continue;
+                }
+                if (!part.empty() && part.front() == ':') {
+                    out << sAttr << part;
+                    continue;
+                }
+                out << sAttr << " " << part << ", " << sAttr << part;
+            }
+            return out.str();
+        }
+    }
+
     StyleSheet& StyleSheet::rule(std::string selector, StyleDeclarations declarations) { // Add or merge CSS declarations for a given CSS selector
         for (auto& [existingSelector, existingDecls] : _rules) { // Search if the selector already exists in the stylesheet
             if (existingSelector == selector) { // If a matching selector rule exists, merge or overwrite its declarations
@@ -801,6 +861,21 @@ namespace UIEngine {
         return css.str();
     }
 
+    StyleSheet StyleSheet::scoped(const std::string& scopeId) const { // Return a copy of this stylesheet with all selectors scoped to scopeId
+        if (scopeId.empty()) {
+            return *this;
+        }
+        StyleSheet scopedSheet;
+        for (const auto& [selector, declarations] : _rules) {
+            scopedSheet.rule(scopeSelector(selector, scopeId), declarations);
+        }
+        return scopedSheet;
+    }
+
+    std::string StyleSheet::toScopedCss(const std::string& scopeId) const { // Serialize rules rewritten with component scope attribute selector
+        return scoped(scopeId).toCss();
+    }
+
     VNode VNode::textNode(std::string content) { // Create a raw text VNode with tag "#text" and the given text content
         return VNode("#text", {}, std::move(content), {}, ""); // Initialize VNode with "#text" tag, empty props, moved text, and no children
     }
@@ -819,8 +894,57 @@ namespace UIEngine {
 
     HTTPServer::Json VNode::toJson() const { // Recursively serialize this VNode and its children into an HTTPServer::Json object
         HTTPServer::Json::Object propsObj; // Create a JSON object map to hold this node's HTML attributes and event handler IDs
+
+        std::vector<std::string> classList;
+        std::set<std::string> seenClasses;
+
+        // Collect existing base classes if provided
+        auto baseClassIt = props.find("class");
+        if (baseClassIt == props.end()) {
+            baseClassIt = props.find("className");
+        }
+        if (baseClassIt != props.end() && baseClassIt->second.isString()) {
+            std::istringstream iss(baseClassIt->second.asString());
+            std::string cls;
+            while (iss >> cls) {
+                if (!seenClasses.contains(cls)) {
+                    seenClasses.insert(cls);
+                    classList.push_back(std::move(cls));
+                }
+            }
+        }
+
+        // Evaluate conditional class directives (class:<className>)
+        for (const auto& [propKey, val] : props) {
+            if (propKey.starts_with("class:")) {
+                const std::string className = propKey.substr(6);
+                bool isTruthy = false;
+                if (val.isBool()) {
+                    isTruthy = val.asBool();
+                } else if (val.isString()) {
+                    const std::string& s = val.asString();
+                    isTruthy = !s.empty() && s != "false" && s != "0";
+                }
+                if (isTruthy && !seenClasses.contains(className)) {
+                    seenClasses.insert(className);
+                    classList.push_back(className);
+                }
+                propsObj[propKey] = isTruthy;
+            }
+        }
+
+        // If any classes exist, set the combined "class" property in propsObj
+        if (!classList.empty()) {
+            std::string combinedClass;
+            for (size_t i = 0; i < classList.size(); ++i) {
+                if (i > 0) combinedClass += " ";
+                combinedClass += classList[i];
+            }
+            propsObj["class"] = std::move(combinedClass);
+        }
+
         for (const auto& [propKey, val] : props) { // Iterate through each key-value pair in the VNode's Props map
-            if (propKey == "key") { // Skip reconciliation key if present in props
+            if (propKey == "key" || propKey == "class" || propKey == "className" || propKey.starts_with("class:")) {
                 continue;
             }
             if (val.isString()) {
@@ -921,6 +1045,15 @@ namespace UIEngine {
         VNode node = render();
         if (node.key.empty()) {
             node.key = compKey;
+        }
+        if (node.tag != "#text") {
+            node.props["data-keet-scope"] = compKey;
+        }
+        StyleSheet compStyles = styles();
+        if (!compStyles.empty()) {
+            StyleSheet scopedStyles = compStyles.scoped(compKey);
+            node.styles = std::make_shared<StyleSheet>(scopedStyles);
+            Detail::registerComponentStyles(compKey, std::move(scopedStyles));
         }
         return node;
     }
@@ -1219,6 +1352,9 @@ namespace UIEngine {
                     else if (key === "data-on-keyup") el.onkeyup = null;
                     else if (key === "data-on-focus") el.onfocus = null;
                     else if (key === "data-on-blur") el.onblur = null;
+                    else if (key.startsWith("class:")) {
+                        el.classList.remove(key.slice(6));
+                    }
                     else if (BOOLEAN_PROPS.has(lower) || (lower in el && typeof el[lower] === "boolean")) {
                         const domProp = (lower === "readonly") ? "readOnly" : lower;
                         if (domProp in el) el[domProp] = false;
@@ -1324,6 +1460,14 @@ namespace UIEngine {
                             value: (e.target && "value" in e.target) ? e.target.value : (el.value || "")
                         }, el);
                     };
+                } else if (key.startsWith("class:")) {
+                    const className = key.slice(6);
+                    const isTruthy = value === true || value === "true" || (typeof value === "string" && value.length > 0 && value !== "false" && value !== "0");
+                    if (isTruthy) {
+                        el.classList.add(className);
+                    } else {
+                        el.classList.remove(className);
+                    }
                 } else if (!key.startsWith("data-on-")) {
                     const lower = key.toLowerCase();
                     const isBoolProp = BOOLEAN_PROPS.has(lower) || typeof value === "boolean";

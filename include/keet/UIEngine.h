@@ -227,6 +227,8 @@ namespace UIEngine {
             void appendRules(const StyleSheet& other); // Internal non-deprecated helper to merge rules without deprecation warnings
             [[nodiscard]] bool empty() const; // Check whether the stylesheet contains any rules
             [[nodiscard]] std::string toCss() const; // Serialize all rules and declarations into a valid CSS string
+            [[nodiscard]] StyleSheet scoped(const std::string& scopeId) const; // Return a copy of this stylesheet with all selectors scoped to scopeId
+            [[nodiscard]] std::string toScopedCss(const std::string& scopeId) const; // Serialize rules rewritten with component scope attribute selector
             [[nodiscard]] const std::vector<std::pair<std::string, StyleDeclarations>>& rules() const { return _rules; } // Return underlying selector rules
 
         private:
@@ -312,10 +314,14 @@ namespace UIEngine {
         if (node.key.empty()) {
             node.key = key;
         }
+        if (node.tag != "#text") {
+            node.props["data-keet-scope"] = key;
+        }
         StyleSheet compStyles = instanceCopy->styles();
         if (!compStyles.empty()) {
-            node.styles = std::make_shared<StyleSheet>(compStyles);
-            Detail::registerComponentStyles(key, std::move(compStyles));
+            StyleSheet scopedStyles = compStyles.scoped(key);
+            node.styles = std::make_shared<StyleSheet>(scopedStyles);
+            Detail::registerComponentStyles(key, std::move(scopedStyles));
         }
         return node;
     }
