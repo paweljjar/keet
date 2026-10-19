@@ -293,16 +293,49 @@ namespace Keety {
                 if (_peek() == 'i' && _peek(1) == 'f' && (std::isspace(static_cast<unsigned char>(_peek(2))) || _peek(2) == '(')) {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::KwIf, "if", loc);
+                    // Read condition until ':'
+                    _skipWhitespaceAndComments();
+                    size_t condStart = _cursor;
+                    while (!_isAtEnd() && _peek() != ':') {
+                        _advance();
+                    }
+                    std::string cond = _source.substr(condStart, _cursor - condStart);
+                    while (!cond.empty() && std::isspace(static_cast<unsigned char>(cond.back()))) cond.pop_back();
+                    tokens.emplace_back(TokenKind::RawText, cond, _currentLoc());
+                    if (_peek() == ':') {
+                        SourceLocation cLoc = _currentLoc();
+                        _advance();
+                        tokens.emplace_back(TokenKind::Colon, ":", cLoc);
+                    }
                     continue;
                 }
                 if (_peek() == 'e' && _peek(1) == 'l' && _peek(2) == 'i' && _peek(3) == 'f' && (std::isspace(static_cast<unsigned char>(_peek(4))) || _peek(4) == '(')) {
                     _advance(); _advance(); _advance(); _advance();
                     tokens.emplace_back(TokenKind::KwElif, "elif", loc);
+                    _skipWhitespaceAndComments();
+                    size_t condStart = _cursor;
+                    while (!_isAtEnd() && _peek() != ':') {
+                        _advance();
+                    }
+                    std::string cond = _source.substr(condStart, _cursor - condStart);
+                    while (!cond.empty() && std::isspace(static_cast<unsigned char>(cond.back()))) cond.pop_back();
+                    tokens.emplace_back(TokenKind::RawText, cond, _currentLoc());
+                    if (_peek() == ':') {
+                        SourceLocation cLoc = _currentLoc();
+                        _advance();
+                        tokens.emplace_back(TokenKind::Colon, ":", cLoc);
+                    }
                     continue;
                 }
                 if (_peek() == 'e' && _peek(1) == 'l' && _peek(2) == 's' && _peek(3) == 'e' && (_peek(4) == ':' || std::isspace(static_cast<unsigned char>(_peek(4))))) {
                     _advance(); _advance(); _advance(); _advance();
                     tokens.emplace_back(TokenKind::KwElse, "else", loc);
+                    _skipWhitespaceAndComments();
+                    if (_peek() == ':') {
+                        SourceLocation cLoc = _currentLoc();
+                        _advance();
+                        tokens.emplace_back(TokenKind::Colon, ":", cLoc);
+                    }
                     continue;
                 }
                 if (_peek() == 'f' && _peek(1) == 'o' && _peek(2) == 'r' && std::isspace(static_cast<unsigned char>(_peek(3)))) {
@@ -315,15 +348,9 @@ namespace Keety {
                     tokens.emplace_back(TokenKind::KwIn, "in", loc);
                     continue;
                 }
-                if (_peek() == ':') {
-                    _advance();
-                    tokens.emplace_back(TokenKind::Colon, ":", loc);
-                    continue;
-                }
-
-                // Otherwise, read raw text until next '<', '{', ':', or newline before potential control flow
+                // Otherwise, read raw text until next '<', '{', or newline before potential control flow
                 size_t textStart = _cursor;
-                while (!_isAtEnd() && _peek() != '<' && _peek() != '{' && _peek() != ':' && _peek() != '\n') {
+                while (!_isAtEnd() && _peek() != '<' && _peek() != '{' && _peek() != '\n') {
                     _advance();
                 }
 

@@ -118,7 +118,7 @@ namespace Keety {
                     if (i > 0) os << ", ";
                     os << _mapType(fn->parameters[i].typeName) << " " << fn->parameters[i].name;
                 }
-                os << ");\n";
+                os << ") const;\n";
             }
             if (!_ast.script->functions.empty()) os << "\n";
         }
@@ -150,7 +150,8 @@ namespace Keety {
         os << "//\n// Automatically generated ahead-of-time by keety 🐱\n// Single-File Component: "
            << comp << "\n//\n\n";
         os << "#include \"" << _headerFileName << "\"\n";
-        os << "#include <utility>\n\n";
+        os << "#include <utility>\n";
+        os << "#include <memory>\n\n";
 
         os << "namespace Generated {\n\n";
 
@@ -204,7 +205,7 @@ namespace Keety {
                     if (i > 0) os << ", ";
                     os << _mapType(fn->parameters[i].typeName) << " " << fn->parameters[i].name;
                 }
-                os << ") {\n";
+                os << ") const {\n";
                 os << "        " << fn->body << "\n";
                 os << "    }\n\n";
             }
@@ -230,6 +231,7 @@ namespace Keety {
 
         // render() method implementation
         os << "    UIEngine::VNode " << comp << "::render() const {\n";
+        os << "        UIEngine::Detail::ComponentScopeGuard _scopeGuard(getComponentKey());\n";
         if (_ast.templateBlock && !_ast.templateBlock->roots.empty()) {
             int nodeCounter = 0;
             // Generate root elements
@@ -285,13 +287,13 @@ namespace Keety {
 
                 if (attr.bindTargetProperty == "value") {
                     os << "        " << varName << ".props[s_prop_" << targetIdent << "] = std::string(this->" << stateVar << ".get());\n";
-                    os << "        " << varName << ".props[s_prop_input] = UIEngine::PropValue([this](const UIEngine::Event& e) {\n";
-                    os << "            this->" << stateVar << ".set(e.value);\n";
+                    os << "        " << varName << ".props[s_prop_input] = UIEngine::PropValue([" << stateVar << " = this->" << stateVar << "](const UIEngine::Event& e) {\n";
+                    os << "            " << stateVar << ".set(e.value);\n";
                     os << "        });\n";
                 } else if (attr.bindTargetProperty == "checked") {
                     os << "        " << varName << ".props[s_prop_" << targetIdent << "] = this->" << stateVar << ".get();\n";
-                    os << "        " << varName << ".props[s_prop_change] = UIEngine::PropValue([this](const UIEngine::Event& e) {\n";
-                    os << "            this->" << stateVar << ".set(e.checked);\n";
+                    os << "        " << varName << ".props[s_prop_change] = UIEngine::PropValue([" << stateVar << " = this->" << stateVar << "](const UIEngine::Event& e) {\n";
+                    os << "            " << stateVar << ".set(e.checked);\n";
                     os << "        });\n";
                 }
             } else if (attr.kind == AttributeKind::EventCallback) {
@@ -303,32 +305,42 @@ namespace Keety {
                 std::string eventIdent = eventName;
                 std::replace(eventIdent.begin(), eventIdent.end(), '-', '_');
 
-                os << "        " << varName << ".props[s_prop_" << eventIdent << "] = UIEngine::PropValue([this](";
-                if (attr.eventExpr.paramStyle == EventParamStyle::EventArg) {
-                    os << "const UIEngine::Event& " << attr.eventExpr.eventArgName;
-                } else {
-                    os << "const UIEngine::Event&";
-                }
-                os << ") {\n";
-
                 // Direct state mutation or statement
                 if (!attr.eventExpr.targetState.empty() && !attr.eventExpr.mutationOp.empty()) {
                     std::string st = attr.eventExpr.targetState;
                     std::string op = attr.eventExpr.mutationOp;
                     std::string val = attr.eventExpr.mutationValue;
-                    if (op == "+=") {
-                        os << "            this->" << st << ".set(this->" << st << ".get() + (" << val << "));\n";
-                    } else if (op == "-=") {
-                        os << "            this->" << st << ".set(this->" << st << ".get() - (" << val << "));\n";
-                    } else if (op == "=") {
-                        os << "            this->" << st << ".set(" << val << ");\n";
+
+                    os << "        " << varName << ".props[s_prop_" << eventIdent << "] = UIEngine::PropValue([" << st << " = this->" << st << "](";
+                    if (attr.eventExpr.paramStyle == EventParamStyle::EventArg) {
+                        os << "const UIEngine::Event& " << attr.eventExpr.eventArgName;
+                    } else {
+                        os << "const UIEngine::Event&";
                     }
+                    os << ") {\n";
+                    if (op == "+=") {
+                        os << "            " << st << ".set(" << st << ".get() + (" << val << "));\n";
+                    } else if (op == "-=") {
+                        os << "            " << st << ".set(" << st << ".get() - (" << val << "));\n";
+                    } else if (op == "=") {
+                        os << "            " << st << ".set(" << val << ");\n";
+                    }
+                    os << "        });\n";
                 } else if (attr.eventExpr.paramStyle == EventParamStyle::MethodReference) {
-                    os << "            this->" << attr.rawValue << "();\n";
+                    os << "        " << varName << ".props[s_prop_" << eventIdent << "] = UIEngine::PropValue([self = std::make_shared<" << _ast.componentName << ">(*this)](const UIEngine::Event&) {\n";
+                    os << "            self->" << attr.rawValue << "();\n";
+                    os << "        });\n";
                 } else {
-                    os << "            " << attr.eventExpr.rawExpression << ";\n";
+                    os << "        " << varName << ".props[s_prop_" << eventIdent << "] = UIEngine::PropValue([self = std::make_shared<" << _ast.componentName << ">(*this)](";
+                    if (attr.eventExpr.paramStyle == EventParamStyle::EventArg) {
+                        os << "const UIEngine::Event& " << attr.eventExpr.eventArgName;
+                    } else {
+                        os << "const UIEngine::Event&";
+                    }
+                    os << ") {\n";
+                    os << "            self->" << attr.eventExpr.rawExpression << ";\n";
+                    os << "        });\n";
                 }
-                os << "        });\n";
             }
         }
 
