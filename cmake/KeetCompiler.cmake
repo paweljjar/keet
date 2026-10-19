@@ -57,7 +57,7 @@ function(keet_add_application TARGET_NAME MAIN_KEET_FILE)
         OUTPUT "${OUT_CPP}" "${OUT_H}"
         COMMAND keety --app -i "${KEET_ABS}" -o "${OUT_CPP}" -h "${OUT_H}" -c "${FILE_NAME}"
         DEPENDS "${KEET_ABS}" keety
-        COMMENT "keety: compiling full-stack application ${MAIN_KEET_FILE} -> ${TARGET_NAME} \U0001F431"
+        COMMENT "keety: compiling full-stack application ${MAIN_KEET_FILE} -> ${TARGET_NAME}"
         VERBATIM
     )
 

@@ -376,7 +376,7 @@ Given a component `Counter.keet`, `keety` emits:
 2. `Counter.cpp`: Static interned strings, `render()` definition, event lambdas, and `styles()`.
 3. Standalone App Mode (`keety --app App.keet -o main.cpp`): Emits a complete `main(int argc, char* argv[])` initializing the database, launching backend and frontend servers on concurrent threads, and handling shutdown signals.
 
-### 7.1 String Interning & Vector Optimization
+### 8.1 String Interning & Vector Optimization
 
 To guarantee zero runtime penalty:
 ```cpp

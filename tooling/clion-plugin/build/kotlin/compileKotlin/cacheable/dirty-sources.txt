@@ -1,5 +1,0 @@
-/Users/pawel/CLionProjects/keet/tooling/clion-plugin/src/main/kotlin/com/keet/plugin/KeetFileType.kt
-/Users/pawel/CLionProjects/keet/tooling/clion-plugin/src/main/kotlin/com/keet/plugin/KeetLanguage.kt
-/Users/pawel/CLionProjects/keet/tooling/clion-plugin/src/main/kotlin/com/keet/plugin/KeetIcons.kt
-/Users/pawel/CLionProjects/keet/tooling/clion-plugin/src/main/kotlin/com/keet/plugin/KeetCompletionContributor.kt
-/Users/pawel/CLionProjects/keet/tooling/clion-plugin/src/main/kotlin/com/keet/plugin/KeetExternalAnnotator.kt

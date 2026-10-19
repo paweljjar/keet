@@ -5,6 +5,7 @@
   "fileTypes": ["keet"],
   "patterns": [
     { "include": "#comments" },
+    { "include": "#server-section" },
     { "include": "#script-section" },
     { "include": "#style-section" },
     { "include": "#template-section" }
@@ -25,6 +26,52 @@
           "name": "comment.block.keet",
           "begin": "/\\*",
           "end": "\\*/"
+        }
+      ]
+    },
+    "server-section": {
+      "begin": "(<)(server)(>)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.html" },
+        "2": { "name": "entity.name.tag.server.html" },
+        "3": { "name": "punctuation.definition.tag.end.html" }
+      },
+      "end": "(</)(server)(>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.html" },
+        "2": { "name": "entity.name.tag.server.html" },
+        "3": { "name": "punctuation.definition.tag.end.html" }
+      },
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#server-keywords" },
+        { "include": "#types" },
+        { "include": "#strings" },
+        { "include": "#numbers" },
+        { "include": "#operators" }
+      ]
+    },
+    "server-keywords": {
+      "patterns": [
+        {
+          "name": "keyword.declaration.server.infrastructure.keet",
+          "match": "\\b(database|table|backend|frontend)\\b"
+        },
+        {
+          "name": "keyword.other.server.constraint.keet",
+          "match": "\\b(primary_key|auto_increment|default)\\b"
+        },
+        {
+          "name": "keyword.control.server.route.keet",
+          "match": "\\b(get|post|put|delete)\\b"
+        },
+        {
+          "name": "support.type.property-name.server.keet",
+          "match": "\\b(port|threads|api|title)\\b"
+        },
+        {
+          "name": "keyword.control.keet",
+          "match": "\\b(return)\\b"
         }
       ]
     },
