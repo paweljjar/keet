@@ -29,7 +29,8 @@ namespace keet::Testing {
             TestElement(std::shared_ptr<Detail::MountedComponentImpl> mountedImpl,
                         UIEngine::VNode node,
                         std::string selector = "",
-                        bool exists = true);
+                        bool exists = true,
+                        std::vector<size_t> path = {});
 
             [[nodiscard]] bool exists() const noexcept { return _exists; }
             explicit operator bool() const noexcept { return exists(); }
@@ -43,18 +44,36 @@ namespace keet::Testing {
             [[nodiscard]] bool propBool(const std::string& name) const;
             [[nodiscard]] const UIEngine::Props& props() const;
             [[nodiscard]] const UIEngine::VNode& vnode() const;
+            [[nodiscard]] const std::vector<size_t>& path() const noexcept { return _path; }
 
             [[nodiscard]] std::vector<TestElement> children() const;
             [[nodiscard]] TestElement find(const std::string& selector) const;
             [[nodiscard]] std::vector<TestElement> findAll(const std::string& selector) const;
 
             // Event dispatchers that execute bound C++ event handlers and trigger synchronous re-render
-            void trigger(const std::string& eventType, const UIEngine::Event& event = {});
-            void triggerClick();
+            void trigger(const std::string& eventType, const UIEngine::Event& event = {}, bool bubble = true);
+            void triggerClick(double clientX = 0.0, double clientY = 0.0);
+            void triggerDoubleClick();
+            void triggerMouseDown();
+            void triggerMouseUp();
             void triggerInput(const std::string& value);
             void triggerChange(const std::string& value);
+            void triggerCheck(bool checked = true);
             void triggerSubmit(const std::map<std::string, std::string>& form = {});
-            void triggerKeyDown(const std::string& key);
+            void triggerFocus();
+            void triggerBlur();
+            void triggerKeyDown(const std::string& key,
+                                const std::string& code = "",
+                                bool shiftKey = false,
+                                bool ctrlKey = false,
+                                bool altKey = false,
+                                bool metaKey = false);
+            void triggerKeyUp(const std::string& key,
+                              const std::string& code = "",
+                              bool shiftKey = false,
+                              bool ctrlKey = false,
+                              bool altKey = false,
+                              bool metaKey = false);
 
         private:
             void _checkExists() const;
@@ -63,6 +82,7 @@ namespace keet::Testing {
             UIEngine::VNode _node;
             bool _exists = false;
             std::string _selector;
+            std::vector<size_t> _path;
     };
 
     // Represents a mounted component tree in an isolated test Session

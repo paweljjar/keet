@@ -190,6 +190,91 @@ namespace keet::Testing {
             return html;
         }
 
+        const UIEngine::VNode* getNodeAtPath(const UIEngine::VNode& root, const std::vector<size_t>& path) {
+            const UIEngine::VNode* curr = &root;
+            for (size_t idx : path) {
+                if (idx >= curr->children.size()) return nullptr;
+                curr = &curr->children[idx];
+            }
+            return curr;
+        }
+
+        void harvestFormFields(const UIEngine::VNode& node, std::map<std::string, std::string>& outForm) {
+            if (node.tag == "input" || node.tag == "textarea" || node.tag == "select") {
+                std::string name = nodeAttr(node, "name");
+                if (!name.empty()) {
+                    if (node.tag == "input") {
+                        std::string type = toLower(nodeAttr(node, "type"));
+                        if (type == "checkbox" || type == "radio") {
+                            bool isChecked = nodeHasAttr(node, "checked") && nodeAttr(node, "checked") != "false";
+                            if (isChecked) {
+                                std::string val = nodeAttr(node, "value");
+                                outForm[name] = val.empty() ? "on" : val;
+                            }
+                        } else {
+                            outForm[name] = nodeAttr(node, "value");
+                        }
+                    } else if (node.tag == "textarea") {
+                        std::string val = nodeAttr(node, "value");
+                        if (val.empty()) {
+                            val = extractText(node);
+                        }
+                        outForm[name] = val;
+                    } else if (node.tag == "select") {
+                        std::string val = nodeAttr(node, "value");
+                        if (val.empty()) {
+                            for (const auto& opt : node.children) {
+                                if (opt.tag == "option" && nodeHasAttr(opt, "selected") && nodeAttr(opt, "selected") != "false") {
+                                    val = nodeAttr(opt, "value");
+                                    if (val.empty()) val = extractText(opt);
+                                    break;
+                                }
+                            }
+                            if (val.empty() && !node.children.empty()) {
+                                for (const auto& opt : node.children) {
+                                    if (opt.tag == "option") {
+                                        val = nodeAttr(opt, "value");
+                                        if (val.empty()) val = extractText(opt);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        outForm[name] = val;
+                    }
+                }
+            }
+            for (const auto& child : node.children) {
+                harvestFormFields(child, outForm);
+            }
+        }
+
+        UIEngine::EventHandler findHandlerInNode(const UIEngine::VNode& node,
+                                                 const std::string& eventType,
+                                                 const std::shared_ptr<UIEngine::Session>& session) {
+            const std::string lowerEvent = toLower(eventType);
+            const std::string onLowerEvent = "on" + lowerEvent;
+            const std::string dataOnLowerEvent = "data-on-" + lowerEvent;
+
+            for (const auto& [propKey, propVal] : node.props) {
+                const std::string lowerKey = toLower(propKey);
+                if (lowerKey == onLowerEvent || lowerKey == lowerEvent || lowerKey == dataOnLowerEvent) {
+                    if (propVal.isHandler()) {
+                        return propVal.asHandler();
+                    } else if (propVal.isString() && session) {
+                        const std::string& hId = propVal.asString();
+                        std::lock_guard lock(session->mutex);
+                        auto hit = session->handlerRegistry.find(hId);
+                        if (hit != session->handlerRegistry.end()) {
+                            return hit->second;
+                        }
+                    }
+                }
+            }
+
+            return nullptr;
+        }
+
         // --- CSS Selector Grammar and Matching Engine ---
         struct AttrCondition {
             std::string name;
@@ -221,6 +306,12 @@ namespace keet::Testing {
             const MatchContextNode* parent = nullptr;
             size_t childIndex = 0;
             size_t totalSiblings = 0;
+            std::vector<size_t> path;
+        };
+
+        struct MatchResult {
+            const UIEngine::VNode* node = nullptr;
+            std::vector<size_t> path;
         };
 
         std::string unquote(const std::string& s) {
@@ -455,9 +546,9 @@ namespace keet::Testing {
 
         void collectMatchingNodes(const MatchContextNode* ctx,
                                   const std::vector<SelectorBranch>& branches,
-                                  std::vector<const UIEngine::VNode*>& out) {
+                                  std::vector<MatchResult>& out) {
             if (ctx->node->tag != "#text" && matchNode(ctx, branches)) {
-                out.push_back(ctx->node);
+                out.push_back(MatchResult{.node = ctx->node, .path = ctx->path});
             }
 
             // Filter child element nodes for sibling calculation
@@ -468,16 +559,22 @@ namespace keet::Testing {
                 }
             }
 
+            size_t rawChildIdx = 0;
             size_t childElemIdx = 0;
             for (const auto& child : ctx->node->children) {
-                if (child.tag == "#text") continue;
-                MatchContextNode childCtx{
-                    .node = &child,
-                    .parent = ctx,
-                    .childIndex = childElemIdx++,
-                    .totalSiblings = elementChildren.size()
-                };
-                collectMatchingNodes(&childCtx, branches, out);
+                if (child.tag != "#text") {
+                    std::vector<size_t> childPath = ctx->path;
+                    childPath.push_back(rawChildIdx);
+                    MatchContextNode childCtx{
+                        .node = &child,
+                        .parent = ctx,
+                        .childIndex = childElemIdx++,
+                        .totalSiblings = elementChildren.size(),
+                        .path = std::move(childPath)
+                    };
+                    collectMatchingNodes(&childCtx, branches, out);
+                }
+                ++rawChildIdx;
             }
         }
     } // namespace
@@ -535,7 +632,7 @@ namespace keet::Testing {
                 if (!all.empty()) {
                     return all.front();
                 }
-                return TestElement(nullptr, UIEngine::VNode(), selector);
+                return TestElement(nullptr, UIEngine::VNode(), selector, false);
             }
 
             std::vector<TestElement> findAll(const std::string& selector) {
@@ -543,17 +640,18 @@ namespace keet::Testing {
                 auto branches = parseSelector(selector);
                 if (branches.empty()) return results;
 
-                std::vector<const UIEngine::VNode*> matches;
+                std::vector<MatchResult> matches;
                 MatchContextNode rootCtx{
                     .node = &rootNode,
                     .parent = nullptr,
                     .childIndex = 0,
-                    .totalSiblings = 1
+                    .totalSiblings = 1,
+                    .path = {}
                 };
                 collectMatchingNodes(&rootCtx, branches, matches);
 
-                for (const auto* m : matches) {
-                    results.emplace_back(shared_from_this(), *m, selector);
+                for (const auto& m : matches) {
+                    results.emplace_back(shared_from_this(), *m.node, selector, true, m.path);
                 }
                 return results;
             }
@@ -562,16 +660,18 @@ namespace keet::Testing {
 
     // --- TestElement Implementation ---
     TestElement::TestElement()
-        : _mountedImpl(nullptr), _node(), _exists(false), _selector("") {}
+        : _mountedImpl(nullptr), _node(), _exists(false), _selector(""), _path({}) {}
 
     TestElement::TestElement(std::shared_ptr<Detail::MountedComponentImpl> mountedImpl,
                              UIEngine::VNode node,
                              std::string selector,
-                             bool exists)
+                             bool exists,
+                             std::vector<size_t> path)
         : _mountedImpl(std::move(mountedImpl)),
           _node(std::move(node)),
           _exists(exists && _mountedImpl != nullptr),
-          _selector(std::move(selector)) {}
+          _selector(std::move(selector)),
+          _path(std::move(path)) {}
 
     void TestElement::_checkExists() const {
         if (!_exists) {
@@ -632,10 +732,14 @@ namespace keet::Testing {
     std::vector<TestElement> TestElement::children() const {
         _checkExists();
         std::vector<TestElement> out;
+        size_t rawChildIdx = 0;
         for (const auto& child : _node.children) {
             if (child.tag != "#text") {
-                out.emplace_back(_mountedImpl, child, "");
+                std::vector<size_t> childPath = _path;
+                childPath.push_back(rawChildIdx);
+                out.emplace_back(_mountedImpl, child, "", true, std::move(childPath));
             }
+            ++rawChildIdx;
         }
         return out;
     }
@@ -646,7 +750,7 @@ namespace keet::Testing {
         if (!all.empty()) {
             return all.front();
         }
-        return TestElement(nullptr, UIEngine::VNode(), selector);
+        return TestElement(nullptr, UIEngine::VNode(), selector, false);
     }
 
     std::vector<TestElement> TestElement::findAll(const std::string& selector) const {
@@ -655,12 +759,13 @@ namespace keet::Testing {
         auto branches = parseSelector(selector);
         if (branches.empty()) return results;
 
-        std::vector<const UIEngine::VNode*> matches;
+        std::vector<MatchResult> matches;
         MatchContextNode rootCtx{
             .node = &_node,
             .parent = nullptr,
             .childIndex = 0,
-            .totalSiblings = 1
+            .totalSiblings = 1,
+            .path = _path
         };
 
         // Search descendant elements of this node
@@ -668,85 +773,119 @@ namespace keet::Testing {
         for (const auto& child : _node.children) {
             if (child.tag != "#text") elementChildren.push_back(&child);
         }
+        size_t rawChildIdx = 0;
         size_t childElemIdx = 0;
         for (const auto& child : _node.children) {
-            if (child.tag == "#text") continue;
-            MatchContextNode childCtx{
-                .node = &child,
-                .parent = &rootCtx,
-                .childIndex = childElemIdx++,
-                .totalSiblings = elementChildren.size()
-            };
-            collectMatchingNodes(&childCtx, branches, matches);
+            if (child.tag != "#text") {
+                std::vector<size_t> childPath = _path;
+                childPath.push_back(rawChildIdx);
+                MatchContextNode childCtx{
+                    .node = &child,
+                    .parent = &rootCtx,
+                    .childIndex = childElemIdx++,
+                    .totalSiblings = elementChildren.size(),
+                    .path = std::move(childPath)
+                };
+                collectMatchingNodes(&childCtx, branches, matches);
+            }
+            ++rawChildIdx;
         }
 
-        for (const auto* m : matches) {
-            results.emplace_back(_mountedImpl, *m, selector);
+        for (const auto& m : matches) {
+            results.emplace_back(_mountedImpl, *m.node, selector, true, m.path);
         }
         return results;
     }
 
-    void TestElement::trigger(const std::string& eventType, const UIEngine::Event& event) {
+    void TestElement::trigger(const std::string& eventType, const UIEngine::Event& event, bool bubble) {
         _checkExists();
         if (!_mountedImpl) {
             fail("Cannot trigger event: TestElement is not connected to a MountedComponent", __FILE__, __LINE__);
         }
 
-        UIEngine::EventHandler handler = nullptr;
-
-        std::string pascalType = eventType;
-        if (!pascalType.empty()) {
-            pascalType[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(pascalType[0])));
+        UIEngine::Event dispatchedEvent = event;
+        if (dispatchedEvent.type.empty()) {
+            dispatchedEvent.type = eventType;
         }
 
-        std::vector<std::string> candidateKeys = {
-            "on" + pascalType,
-            "on" + eventType,
-            eventType,
-            "data-on-" + eventType
-        };
+        UIEngine::EventHandler handler = nullptr;
+        const UIEngine::VNode* handlingNode = nullptr;
 
-        for (const auto& key : candidateKeys) {
-            auto it = _node.props.find(key);
-            if (it != _node.props.end()) {
-                if (it->second.isHandler()) {
-                    handler = it->second.asHandler();
-                    break;
-                } else if (it->second.isString()) {
-                    const std::string& hId = it->second.asString();
-                    if (_mountedImpl->session) {
-                        std::lock_guard lock(_mountedImpl->session->mutex);
-                        auto hit = _mountedImpl->session->handlerRegistry.find(hId);
-                        if (hit != _mountedImpl->session->handlerRegistry.end()) {
-                            handler = hit->second;
-                            break;
-                        }
+        // 1. Direct handler check on target node
+        handler = findHandlerInNode(_node, eventType, _mountedImpl->session);
+        if (handler) {
+            handlingNode = &_node;
+        }
+
+        // 2. Event bubbling up ancestor chain
+        if (!handler && bubble && !_path.empty()) {
+            for (int len = static_cast<int>(_path.size()) - 1; len >= 0; --len) {
+                std::vector<size_t> subpath(_path.begin(), _path.begin() + len);
+                const auto* ancestor = getNodeAtPath(_mountedImpl->rootNode, subpath);
+                if (ancestor) {
+                    auto ancHandler = findHandlerInNode(*ancestor, eventType, _mountedImpl->session);
+                    if (ancHandler) {
+                        handler = std::move(ancHandler);
+                        handlingNode = ancestor;
+                        break;
                     }
                 }
             }
         }
 
         if (!handler) {
-            fail("No event handler found for event type \"" + eventType + "\" on element <" + _node.tag + ">", __FILE__, __LINE__);
+            fail("No event handler found for event type \"" + eventType + "\" on element <" + _node.tag + ">" +
+                 (bubble ? " (or its ancestors)" : ""), __FILE__, __LINE__);
         }
 
+        // 3. Automatic form harvesting for submit events
+        if (eventType == "submit" && dispatchedEvent.form.empty()) {
+            if (handlingNode) {
+                harvestFormFields(*handlingNode, dispatchedEvent.form);
+            }
+        }
+
+        // 4. Execute handler in active session context
         {
             UIEngine::SessionContext ctx(_mountedImpl->session);
-            handler(event);
+            handler(dispatchedEvent);
         }
 
+        // 5. Synchronous re-render
         _mountedImpl->rerender();
 
+        // 6. Refresh _node from updated tree
         if (!_selector.empty()) {
             auto updated = _mountedImpl->find(_selector);
             if (updated.exists()) {
                 _node = updated.vnode();
             }
+        } else if (!_path.empty()) {
+            const auto* reloaded = getNodeAtPath(_mountedImpl->rootNode, _path);
+            if (reloaded) {
+                _node = *reloaded;
+            }
         }
     }
 
-    void TestElement::triggerClick() {
-        trigger("click", UIEngine::Event{.type = "click"});
+    void TestElement::triggerClick(double clientX, double clientY) {
+        trigger("click", UIEngine::Event{
+            .type = "click",
+            .clientX = clientX,
+            .clientY = clientY
+        });
+    }
+
+    void TestElement::triggerDoubleClick() {
+        trigger("dblclick", UIEngine::Event{.type = "dblclick"});
+    }
+
+    void TestElement::triggerMouseDown() {
+        trigger("mousedown", UIEngine::Event{.type = "mousedown"});
+    }
+
+    void TestElement::triggerMouseUp() {
+        trigger("mouseup", UIEngine::Event{.type = "mouseup"});
     }
 
     void TestElement::triggerInput(const std::string& value) {
@@ -757,12 +896,58 @@ namespace keet::Testing {
         trigger("change", UIEngine::Event{.type = "change", .value = value});
     }
 
+    void TestElement::triggerCheck(bool checked) {
+        trigger("change", UIEngine::Event{
+            .type = "change",
+            .value = checked ? "true" : "false",
+            .checked = checked
+        });
+    }
+
     void TestElement::triggerSubmit(const std::map<std::string, std::string>& form) {
         trigger("submit", UIEngine::Event{.type = "submit", .form = form});
     }
 
-    void TestElement::triggerKeyDown(const std::string& key) {
-        trigger("keydown", UIEngine::Event{.type = "keydown", .key = key});
+    void TestElement::triggerFocus() {
+        trigger("focus", UIEngine::Event{.type = "focus"});
+    }
+
+    void TestElement::triggerBlur() {
+        trigger("blur", UIEngine::Event{.type = "blur"});
+    }
+
+    void TestElement::triggerKeyDown(const std::string& key,
+                                    const std::string& code,
+                                    bool shiftKey,
+                                    bool ctrlKey,
+                                    bool altKey,
+                                    bool metaKey) {
+        trigger("keydown", UIEngine::Event{
+            .type = "keydown",
+            .key = key,
+            .code = code.empty() ? key : code,
+            .altKey = altKey,
+            .ctrlKey = ctrlKey,
+            .shiftKey = shiftKey,
+            .metaKey = metaKey
+        });
+    }
+
+    void TestElement::triggerKeyUp(const std::string& key,
+                                  const std::string& code,
+                                  bool shiftKey,
+                                  bool ctrlKey,
+                                  bool altKey,
+                                  bool metaKey) {
+        trigger("keyup", UIEngine::Event{
+            .type = "keyup",
+            .key = key,
+            .code = code.empty() ? key : code,
+            .altKey = altKey,
+            .ctrlKey = ctrlKey,
+            .shiftKey = shiftKey,
+            .metaKey = metaKey
+        });
     }
 
     // --- MountedComponent Implementation ---

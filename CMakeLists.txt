@@ -86,3 +86,10 @@ add_executable(keet_test_vdom_harness
 )
 target_link_libraries(keet_test_vdom_harness PRIVATE keet)
 add_test(NAME keet_test_vdom_harness COMMAND keet_test_vdom_harness)
+
+# Event Dispatcher & Bubbling unit test executable
+add_executable(keet_test_event_dispatcher
+        tests/test_event_dispatcher.cpp
+)
+target_link_libraries(keet_test_event_dispatcher PRIVATE keet)
+add_test(NAME keet_test_event_dispatcher COMMAND keet_test_event_dispatcher)
