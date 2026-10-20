@@ -266,6 +266,7 @@ namespace HTTPServer {
         if (typeName == "integer") return "INTEGER";
         if (typeName == "float") return "REAL";
         if (typeName == "string") return "TEXT";
+        if (typeName == "blob") return "BLOB";
         if (typeName == "boolean") return "INTEGER";
         if (typeName == "array") return "TEXT";
         if (typeName == "object") return "TEXT";
@@ -278,7 +279,7 @@ namespace HTTPServer {
         }
 
         static const std::set<std::string> allowedTypes = {
-            "integer", "string", "boolean", "float", "array", "object"
+            "integer", "string", "boolean", "float", "blob", "array", "object"
         };
         static const std::set<std::string> booleanOptions = {
             "required", "primary_key", "auto_increment", "unique"
@@ -323,11 +324,11 @@ namespace HTTPServer {
         if (typeName == "float") {
             return value.isNumber() && std::isfinite(value.asNumber());
         }
-        if (typeName == "string") {
+        if (typeName == "string" || typeName == "blob") {
             return value.isString();
         }
         if (typeName == "boolean") {
-            return value.isBool();
+            return value.isBool() || (value.isNumber() && (value.asNumber() == 0.0 || value.asNumber() == 1.0));
         }
         if (typeName == "array") {
             return value.isArray();
@@ -350,6 +351,34 @@ namespace HTTPServer {
             }
         }
         return {};
+    }
+
+    Json::Object Database::_formatRowWithScheme(Json::Object row, const Json::Object& scheme) {
+        if (scheme.empty()) return row;
+        for (const auto& [colName, colDef] : scheme) {
+            if (!row.contains(colName)) continue;
+            const Json::Object& colObj = colDef.asObject();
+            const std::string& typeName = colObj.at("type").asString();
+            Json& val = row[colName];
+            if (val.isNull()) continue;
+
+            if (typeName == "boolean") {
+                if (val.isNumber()) {
+                    val = (val.asNumber() != 0.0);
+                }
+            } else if (typeName == "array" && val.isString()) {
+                try {
+                    Json parsed = Json::parse(val.asString());
+                    if (parsed.isArray()) val = std::move(parsed);
+                } catch (...) {}
+            } else if (typeName == "object" && val.isString()) {
+                try {
+                    Json parsed = Json::parse(val.asString());
+                    if (parsed.isObject()) val = std::move(parsed);
+                } catch (...) {}
+            }
+        }
+        return row;
     }
 
     bool Database::createTable(const std::string& tableName, const Json::Object& scheme) {
@@ -480,7 +509,7 @@ namespace HTTPServer {
             executeUpdate(sql.str(), params);
         } catch (const std::exception& e) {
             std::string msg = e.what();
-            if (msg.find("UNIQUE") != std::string::npos) {
+            if (msg.find("UNIQUE") != std::string::npos || msg.find("constraint failed") != std::string::npos) {
                 throw std::invalid_argument("Unique constraint violation: " + msg);
             }
             throw;
@@ -490,7 +519,7 @@ namespace HTTPServer {
             newRecord[autoIncCol] = static_cast<double>(lastInsertId());
         }
 
-        return newRecord;
+        return _formatRowWithScheme(std::move(newRecord), scheme);
     }
 
     Json::Array Database::select(const std::string& tableName, const Json::Object& where) const {
@@ -533,7 +562,11 @@ namespace HTTPServer {
         }
         sql << ";";
 
-        return query(sql.str(), params);
+        Json::Array rows = query(sql.str(), params);
+        for (auto& row : rows) {
+            row = _formatRowWithScheme(row.asObject(), scheme);
+        }
+        return rows;
     }
 
     Json::Array Database::select(const std::string& tableName, const std::function<bool(const Json::Object&)>& where) const {
@@ -546,6 +579,39 @@ namespace HTTPServer {
             }
         }
         return matched;
+    }
+
+    size_t Database::count(const std::string& tableName, const Json::Object& where) const {
+        if (tableName.empty()) throw std::invalid_argument("Table name cannot be empty");
+        if (!hasTable(tableName)) throw std::invalid_argument("Table '" + tableName + "' does not exist");
+
+        std::ostringstream sql;
+        sql << "SELECT count(*) as cnt FROM \"" << tableName << "\"";
+        std::vector<Json> params;
+        if (!where.empty()) {
+            sql << " WHERE ";
+            bool first = true;
+            for (const auto& [key, val] : where) {
+                if (!first) sql << " AND ";
+                first = false;
+                if (val.isNull()) {
+                    sql << "\"" << key << "\" IS NULL";
+                } else {
+                    sql << "\"" << key << "\" = ?";
+                    params.push_back(val);
+                }
+            }
+        }
+        sql << ";";
+
+        Json::Array res = query(sql.str(), params);
+        if (!res.empty()) {
+            const auto& obj = res[0].asObject();
+            if (obj.contains("cnt") && obj.at("cnt").isNumber()) {
+                return static_cast<size_t>(obj.at("cnt").asNumber());
+            }
+        }
+        return 0;
     }
 
     Json::Array Database::update(const std::string& tableName, const Json::Object& updates, const Json::Object& where) {
@@ -613,7 +679,7 @@ namespace HTTPServer {
             executeUpdate(sql.str(), params);
         } catch (const std::exception& e) {
             std::string msg = e.what();
-            if (msg.find("UNIQUE") != std::string::npos) {
+            if (msg.find("UNIQUE") != std::string::npos || msg.find("constraint failed") != std::string::npos) {
                 throw std::invalid_argument("Unique constraint violation: " + msg);
             }
             throw;
@@ -625,7 +691,7 @@ namespace HTTPServer {
             for (const auto& [col, val] : updates) {
                 updated[col] = val;
             }
-            updatedRecords.push_back(std::move(updated));
+            updatedRecords.push_back(_formatRowWithScheme(std::move(updated), scheme));
         }
         return updatedRecords;
     }
@@ -715,8 +781,20 @@ namespace HTTPServer {
         return _db.select(_table, where);
     }
 
+    Json::Array TableProxy::select(const std::function<bool(const Json::Object&)>& where) const {
+        return _db.select(_table, where);
+    }
+
     Json::Array TableProxy::find(const Json::Object& where) const {
         return _db.select(_table, where);
+    }
+
+    Json::Array TableProxy::find(const std::function<bool(const Json::Object&)>& where) const {
+        return _db.select(_table, where);
+    }
+
+    size_t TableProxy::count(const Json::Object& where) const {
+        return _db.count(_table, where);
     }
 
     Json::Object TableProxy::insert(const Json::Object& record) {
@@ -727,7 +805,15 @@ namespace HTTPServer {
         return _db.update(_table, updates, where);
     }
 
+    Json::Array TableProxy::update(const Json::Object& updates, const std::function<bool(const Json::Object&)>& where) {
+        return _db.update(_table, updates, where);
+    }
+
     Json::Array TableProxy::remove(const Json::Object& where) {
+        return _db.remove(_table, where);
+    }
+
+    Json::Array TableProxy::remove(const std::function<bool(const Json::Object&)>& where) {
         return _db.remove(_table, where);
     }
 } // HTTPServer

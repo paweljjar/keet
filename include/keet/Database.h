@@ -19,10 +19,15 @@ namespace HTTPServer {
         public:
             TableProxy(Database& db, std::string tableName);
             [[nodiscard]] Json::Array select(const Json::Object& where = {}) const;
+            [[nodiscard]] Json::Array select(const std::function<bool(const Json::Object&)>& where) const;
             [[nodiscard]] Json::Array find(const Json::Object& where = {}) const;
+            [[nodiscard]] Json::Array find(const std::function<bool(const Json::Object&)>& where) const;
+            [[nodiscard]] size_t count(const Json::Object& where = {}) const;
             Json::Object insert(const Json::Object& record);
             Json::Array update(const Json::Object& updates, const Json::Object& where = {});
+            Json::Array update(const Json::Object& updates, const std::function<bool(const Json::Object&)>& where);
             Json::Array remove(const Json::Object& where = {});
+            Json::Array remove(const std::function<bool(const Json::Object&)>& where);
         private:
             Database& _db;
             std::string _table;
@@ -59,6 +64,7 @@ namespace HTTPServer {
             Json::Object insert(const std::string& tableName, const Json::Object& record);
             Json::Array select(const std::string& tableName, const Json::Object& where = {}) const;
             Json::Array select(const std::string& tableName, const std::function<bool(const Json::Object&)>& where) const;
+            size_t count(const std::string& tableName, const Json::Object& where = {}) const;
             Json::Array update(const std::string& tableName, const Json::Object& updates, const Json::Object& where = {});
             Json::Array update(const std::string& tableName, const Json::Object& updates, const std::function<bool(const Json::Object&)>& where);
             Json::Array remove(const std::string& tableName, const Json::Object& where = {});
@@ -76,6 +82,7 @@ namespace HTTPServer {
             static bool _matchesType(const Json& value, const std::string& typeName);
             Json::Object _getTableScheme(const std::string& tableName) const;
             static std::string _mapTypeToSql(const std::string& typeName);
+            static Json::Object _formatRowWithScheme(Json::Object row, const Json::Object& scheme);
     };
 } // HTTPServer
 
