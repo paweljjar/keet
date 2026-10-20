@@ -1,0 +1,5 @@
+<div id="card-123" class="card active">
+  <h2 class="card-title">System Status</h2>
+  <p class="status-ok">All systems operational</p>
+  <button class="btn btn-primary">Refresh</button>
+</div>
