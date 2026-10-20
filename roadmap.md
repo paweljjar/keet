@@ -119,33 +119,34 @@ Phase III: Next-Gen Compiler & Developer Environment
 Phase IV: Desktop Packaging & Advanced Ecosystem
 ├── Feature 16: Native Desktop Packaging (dmstct-keety) 🏠🐱
 ├── Feature 17: Network Client Hardening & Automated Missing Key Translation Engine
-└── Feature 18: Asynchronous Coroutines & Event Loops (kqueue / io_uring)
+├── Feature 18: Asynchronous Coroutines & Event Loops (kqueue / io_uring)
+└── Feature 19: Universal Data Connectors & Embedded Document Database (cattery-jsondb, cattery-sql-client, cattery-mongo)
 
 Phase V: The Cattery (cattery-fx) Monorepo Standard Library
-└── 60 Foundational Native Packages
+└── 63 Foundational Native Packages
 ```
 
 ---
 
 ### Phase I: Core Hardening & Quality Gate
 
-#### Feature 6: Test Scaffolding & Headless Component Testing Harness (`keet test` / `cattery-test`)
-- **Status:** Next in Queue ⏳ (Prerequisite for all subsequent engine changes)
+#### Feature 6: Test Scaffolding & Headless Component Testing Harness (`keet test` / `cattery-test`) [Completed ✅]
+- **Status:** Completed ✅
 - **Addresses:** Landscape report step 1; lack of automated regression tests and sanitizers.
 - **Description:** Establishes the automated testing foundation for the Keet framework. Integrates CTest, compiles unit tests under AddressSanitizer (ASan), UndefinedBehaviorSanitizer (UBSan), and ThreadSanitizer (TSan), wires `tools/keety/test_ast.cpp`, and provides a headless native C++ VDOM test harness (`keet/Testing.h`) to verify component rendering and event dispatching without opening network sockets or browser instances.
 - **Phases:**
-    - **Phase 1: CMake & CTest Scaffolding + Sanitizers**
-        - 1.1: Enable CTest in root `CMakeLists.txt` and wire `tools/keety/test_ast.cpp` into an executable test target.
-        - 1.2: Add CMake options for ASan, UBSan, and TSan builds (`ENABLE_ASAN`, `ENABLE_TSAN`, `ENABLE_UBSAN`).
-        - 1.3: Establish a lightweight, zero-dependency C++ unit assertion harness for engine regression testing.
-    - **Phase 2: Headless VDOM Test Renderer & Simulator (`keet/Testing.h`)**
-        - 2.1: Implement `TestHarness::mount<Component>(props)` to render components headlessly into an inspectable VNode hierarchy.
-        - 2.2: Add CSS-selector query helpers (`find(".btn")`, `findAll("li")`, `text()`) and assertion macros (`KEET_ASSERT_TEXT`, `KEET_ASSERT_ATTR`).
-        - 2.3: Provide synthetic event dispatchers (`triggerClick()`, `triggerInput("value")`) that execute bound C++ lambdas synchronously and return updated VNodes.
-    - **Phase 3: Integration Runner & CLI (`keet test`)**
-        - 3.1: Support ephemeral `:memory:` database provisioning and mock `Session` contexts for end-to-end integration tests.
-        - 3.2: Add `keet_add_test()` macro to CMake to compile and execute `.test.keet` components with formatted test reporting.
-        - 3.3: Implement VNode snapshot testing (`assertMatchesSnapshot()`) to prevent unintended UI or scoped CSS regressions.
+    - **Phase 1: CMake & CTest Scaffolding + Sanitizers** [Completed ✅]
+        - 1.1: Enable CTest in root `CMakeLists.txt` and wire `tools/keety/test_ast.cpp` into an executable test target. [Completed ✅]
+        - 1.2: Add CMake options for ASan, UBSan, and TSan builds (`ENABLE_ASAN`, `ENABLE_TSAN`, `ENABLE_UBSAN`). [Completed ✅]
+        - 1.3: Establish a lightweight, zero-dependency C++ unit assertion harness for engine regression testing. [Completed ✅]
+    - **Phase 2: Headless VDOM Test Renderer & Simulator (`keet/Testing.h`)** [Completed ✅]
+        - 2.1: Implement `TestHarness::mount<Component>(props)` to render components headlessly into an inspectable VNode hierarchy. [Completed ✅]
+        - 2.2: Add CSS-selector query helpers (`find(".btn")`, `findAll("li")`, `text()`) and assertion macros (`KEET_ASSERT_TEXT`, `KEET_ASSERT_ATTR`). [Completed ✅]
+        - 2.3: Provide synthetic event dispatchers (`triggerClick()`, `triggerInput("value")`) that execute bound C++ lambdas synchronously and return updated VNodes. [Completed ✅]
+    - **Phase 3: Integration Runner & CLI (`keet test`)** [Completed ✅]
+        - 3.1: Support ephemeral `:memory:` database provisioning and mock `Session` contexts for end-to-end integration tests. [Completed ✅]
+        - 3.2: Add `keet_add_test()` macro to CMake to compile and execute `.test.keet` components with formatted test reporting. [Completed ✅]
+        - 3.3: Implement VNode snapshot testing (`assertMatchesSnapshot()`) to prevent unintended UI or scoped CSS regressions. [Completed ✅]
 
 ---
 
@@ -365,6 +366,25 @@ Phase V: The Cattery (cattery-fx) Monorepo Standard Library
 
 ---
 
+#### Feature 19: Universal Data Connectors & Embedded Document Database (`cattery-jsondb`, `cattery-sql-client`, `cattery-mongo`)
+- **Status:** Strategic Data Milestone ⏳
+- **Description:** Expands Keet's database capabilities beyond local embedded SQLite by introducing enterprise external database connectivity (PostgreSQL, MySQL/MariaDB, MongoDB) and revisiting the native Keet JSON-based database concept as an ultra-lightweight, dedicated document store package (`cattery-jsondb`) tailored for flat-file CMS, embedded devices, and rapid prototyping without SQL overhead.
+- **Phases:**
+    - **Phase 1: `cattery-jsondb` — Native Schema-Validated JSON Document Database (Revisited)**
+        - 1.1: Re-architect the original flat-file JSON database concept into a thread-safe, append-only log / memory-mapped document store (`cattery-jsondb`).
+        - 1.2: Implement flexible runtime schema validation (via `cattery-validate`), BSON/JSON binary indexing, nested document queries (`doc.get("profile.address.city")`), and atomic ACID commit durability without requiring SQL schemas.
+        - 1.3: Expose reactive change streams allowing UI components to subscribe to document mutations.
+    - **Phase 2: `cattery-sql-client` — External SQL Database Connectors (PostgreSQL & MySQL)**
+        - 2.1: Native wire-protocol clients and connection pool management for PostgreSQL (wire format / `libpq`) and MySQL/MariaDB.
+        - 2.2: Parameterized query execution, streaming cursor result sets, and async connection leasing across worker threads.
+        - 2.3: Cross-database transaction abstraction and unified connection string parsing (`postgres://user:pass@host:5432/dbname`).
+    - **Phase 3: `cattery-mongo` — Native MongoDB Wire Client**
+        - 3.1: Lightweight native BSON encoder/decoder and MongoDB wire protocol implementation (OP_MSG).
+        - 3.2: Collection-based CRUD operations, aggregation pipelines, document projections, and replica-set reconnect handling.
+        - 3.3: First-class KeetScript `<server>` integration: `mongo = Mongo.connect("mongodb://localhost:27017")`.
+
+---
+
 ## 4. Phase V: The Cattery (`cattery-fx`) Package Roadmap 📦
 
 To solve ecosystem dependencies without relying on heavy, dynamic runtimes like npm or pip, Keet utilizes **Cattery (`cattery-fx`)**—a native package manager and monorepo standard library. Developers **adopt** packages into their projects with zero external build tools.
@@ -504,3 +524,6 @@ Thirteen foundational modules currently reside directly inside the monolithic `k
 | 58 | **`cattery-serial`** | Hardware & IoT | Cross-platform RS-232 / USB serial port communication for microcontrollers and peripherals. | 🌱 **New Package** *(Planned)* |
 | 59 | **`cattery-bluetooth`**| Hardware & IoT | Native Bluetooth Low Energy (BLE) scanning, GATT client connection, and characteristic streaming. | 🌱 **New Package** *(Planned)* |
 | 60 | **`cattery-dialog`** | Desktop UI | Native operating system file pickers, alert dialogs, and folder selection for `dmstct-keety`. | 🌱 **New Package** *(Planned)* |
+| 61 | **`cattery-jsondb`** | Data & Storage | Ultra-lightweight schema-validated flat-file & in-memory JSON document database. | 🌱 **New Package** *(Planned)* |
+| 62 | **`cattery-sql-client`**| Data & Storage | Native connection pool & wire-protocol client for external SQL databases (Postgres, MySQL). | 🌱 **New Package** *(Planned)* |
+| 63 | **`cattery-mongo`** | Data & Storage | Native MongoDB client supporting BSON wire protocol, document queries, and cursors. | 🌱 **New Package** *(Planned)* |
