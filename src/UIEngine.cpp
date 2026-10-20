@@ -861,6 +861,15 @@ namespace UIEngine {
                 std::lock_guard lock(session->mutex);
                 auto it = session->stateStore.find(key);
                 if (it == session->stateStore.end()) {
+                    const size_t dotPos = key.rfind('.');
+                    if (dotPos != std::string::npos) {
+                        const std::string suffix = key.substr(dotPos + 1);
+                        auto suffIt = session->stateStore.find(suffix);
+                        if (suffIt != session->stateStore.end()) {
+                            it = session->stateStore.emplace(key, suffIt->second).first;
+                            return it->second;
+                        }
+                    }
                     it = session->stateStore.emplace(key, initializer()).first;
                 }
                 return it->second;
@@ -868,6 +877,15 @@ namespace UIEngine {
             std::lock_guard lock(fallbackStateMutex);
             auto it = fallbackStateStore.find(key);
             if (it == fallbackStateStore.end()) {
+                const size_t dotPos = key.rfind('.');
+                if (dotPos != std::string::npos) {
+                    const std::string suffix = key.substr(dotPos + 1);
+                    auto suffIt = fallbackStateStore.find(suffix);
+                    if (suffIt != fallbackStateStore.end()) {
+                        it = fallbackStateStore.emplace(key, suffIt->second).first;
+                        return it->second;
+                    }
+                }
                 it = fallbackStateStore.emplace(key, initializer()).first;
             }
             return it->second;

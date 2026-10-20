@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 
@@ -956,6 +958,10 @@ namespace keet::Testing {
         : _impl(std::make_shared<Detail::MountedComponentImpl>()) {
         _impl->session = std::move(session);
         _impl->factory = std::move(factory);
+        if (_impl->session) {
+            _impl->currentPath = _impl->session->currentPath;
+            _impl->currentLocale = _impl->session->locale;
+        }
         _impl->rerender();
     }
 
@@ -983,6 +989,10 @@ namespace keet::Testing {
 
     std::shared_ptr<UIEngine::Session> MountedComponent::session() const {
         return _impl->session;
+    }
+
+    std::string MountedComponent::sessionId() const {
+        return _impl && _impl->session ? _impl->session->id : "";
     }
 
     void MountedComponent::navigate(const std::string& path) {
@@ -1013,15 +1023,135 @@ namespace keet::Testing {
 
     // --- TestHarness Implementation ---
     MountedComponent TestHarness::mount(std::function<UIEngine::VNode()> factory,
-                                        const std::string& initialPath,
-                                        const std::string& initialLocale) {
+                                        const MountOptions& options) {
         const std::string sessId = "keet_test_session_" + std::to_string(++nextTestSessionNumber);
         auto session = UIEngine::SessionManager::instance().getOrCreateSession(sessId);
-        session->currentPath = initialPath;
-        session->locale = initialLocale;
+        session->currentPath = options.path;
+        session->locale = options.locale;
+
+        for (const auto& [k, v] : options.initialState) {
+            session->stateStore[k] = v;
+        }
 
         MountedComponent mc(session, std::move(factory));
         return mc;
     }
+
+    // --- Snapshot Testing Implementation ---
+    namespace Snapshot {
+        std::string formatVNode(const UIEngine::VNode& node, int indent) {
+            std::string spaces(indent, ' ');
+            if (node.tag == "#text") {
+                return spaces + node.text + "\n";
+            }
+
+            std::string out = spaces + "<" + node.tag;
+            std::string id = nodeAttr(node, "id");
+            if (!id.empty()) {
+                out += " id=\"" + id + "\"";
+            }
+
+            std::string cls = extractMergedClass(node);
+            if (!cls.empty()) {
+                out += " class=\"" + cls + "\"";
+            }
+
+            for (const auto& [k, v] : node.props) {
+                if (k == "id" || k == "class" || k == "className" || k.starts_with("class:") || k == "key") {
+                    continue;
+                }
+                if (v.isString()) {
+                    out += " " + k + "=\"" + v.asString() + "\"";
+                } else if (v.isBool()) {
+                    if (v.asBool()) out += " " + k;
+                } else if (v.isHandler()) {
+                    std::string eventName = k.starts_with("on") ? k.substr(2) : k;
+                    out += " data-on-" + toLower(eventName);
+                }
+            }
+
+            static const std::set<std::string> voidTags = {
+                "area", "base", "br", "col", "embed", "hr", "img", "input",
+                "link", "meta", "param", "source", "track", "wbr"
+            };
+
+            if (voidTags.contains(node.tag) && node.children.empty()) {
+                out += " />\n";
+                return out;
+            }
+
+            if (node.children.size() == 1 && node.children[0].tag == "#text") {
+                out += ">" + node.children[0].text + "</" + node.tag + ">\n";
+                return out;
+            }
+
+            out += ">\n";
+            for (const auto& child : node.children) {
+                out += formatVNode(child, indent + 2);
+            }
+            out += spaces + "</" + node.tag + ">\n";
+            return out;
+        }
+
+        void assertMatchesSnapshot(const std::string& actualHtml,
+                                   const std::string& snapshotName,
+                                   const std::string& snapshotDir,
+                                   const char* file,
+                                   int line) {
+            namespace fs = std::filesystem;
+            fs::path dir(snapshotDir);
+            if (!fs::exists(dir)) {
+                fs::create_directories(dir);
+            }
+
+            fs::path snapPath = dir / (snapshotName + ".snap");
+            bool updateSnapshots = (std::getenv("UPDATE_SNAPSHOTS") != nullptr);
+
+            if (!fs::exists(snapPath) || updateSnapshots) {
+                std::ofstream ofs(snapPath);
+                if (!ofs.is_open()) {
+                    fail("Failed to write snapshot file: " + snapPath.string(), file, line);
+                }
+                ofs << actualHtml;
+                return;
+            }
+
+            std::ifstream ifs(snapPath);
+            if (!ifs.is_open()) {
+                fail("Failed to read snapshot file: " + snapPath.string(), file, line);
+            }
+
+            std::stringstream buffer;
+            buffer << ifs.rdbuf();
+            std::string expectedHtml = buffer.str();
+
+            if (actualHtml != expectedHtml) {
+                std::string diffMsg = "Snapshot mismatch for '" + snapshotName + "'\n" +
+                                      "Snapshot file: " + snapPath.string() + "\n" +
+                                      "--- Expected Snapshot ---\n" + expectedHtml +
+                                      "--- Actual Output ---\n" + actualHtml +
+                                      "(Run with UPDATE_SNAPSHOTS=1 to update snapshot files)";
+                fail(diffMsg, file, line);
+            }
+        }
+
+        void assertMatchesSnapshot(const MountedComponent& mounted,
+                                   const std::string& snapshotName,
+                                   const std::string& snapshotDir,
+                                   const char* file,
+                                   int line) {
+            std::string formatted = formatVNode(mounted.vnode());
+            assertMatchesSnapshot(formatted, snapshotName, snapshotDir, file, line);
+        }
+
+        void assertMatchesSnapshot(const TestElement& element,
+                                   const std::string& snapshotName,
+                                   const std::string& snapshotDir,
+                                   const char* file,
+                                   int line) {
+            std::string formatted = formatVNode(element.vnode());
+            assertMatchesSnapshot(formatted, snapshotName, snapshotDir, file, line);
+        }
+    } // namespace Snapshot
 
 } // namespace keet::Testing

@@ -58,8 +58,9 @@ add_executable(keety
 )
 target_include_directories(keety PRIVATE tools/keety)
 
-# Include KeetScript Ahead-of-Time compiler CMake helper
+# Include KeetScript Ahead-of-Time compiler and Testing CMake helpers
 include(cmake/KeetCompiler.cmake)
+include(cmake/KeetTesting.cmake)
 
 # Enable CTest integration
 enable_testing()
@@ -74,22 +75,13 @@ target_include_directories(keety_test_ast PRIVATE tools/keety)
 add_test(NAME keety_test_ast COMMAND keety_test_ast)
 
 # Core Testing framework unit test executable
-add_executable(keet_test_framework
-        tests/test_framework.cpp
-)
-target_link_libraries(keet_test_framework PRIVATE keet)
-add_test(NAME keet_test_framework COMMAND keet_test_framework)
+keet_add_test(keet_test_framework tests/test_framework.cpp)
 
 # Headless VDOM Test Harness unit test executable
-add_executable(keet_test_vdom_harness
-        tests/test_vdom_harness.cpp
-)
-target_link_libraries(keet_test_vdom_harness PRIVATE keet)
-add_test(NAME keet_test_vdom_harness COMMAND keet_test_vdom_harness)
+keet_add_test(keet_test_vdom_harness tests/test_vdom_harness.cpp)
 
 # Event Dispatcher & Bubbling unit test executable
-add_executable(keet_test_event_dispatcher
-        tests/test_event_dispatcher.cpp
-)
-target_link_libraries(keet_test_event_dispatcher PRIVATE keet)
-add_test(NAME keet_test_event_dispatcher COMMAND keet_test_event_dispatcher)
+keet_add_test(keet_test_event_dispatcher tests/test_event_dispatcher.cpp)
+
+# Mock Session & Snapshot Testing unit test executable
+keet_add_test(keet_test_snapshots_and_session tests/test_snapshots_and_session.cpp)

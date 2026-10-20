@@ -6,6 +6,7 @@
 #define LORIKEET_TESTING_H
 
 #include <exception>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <sstream>
@@ -202,6 +203,15 @@ namespace keet::Testing {
             ::keet::Testing::fail("Expected " #element " to have class \"" + _cls + "\", but had: \"" + (element).attr("class") + "\"", __FILE__, __LINE__); \
         } \
     } while (false)
+
+#define KEET_ASSERT_MATCHES_SNAPSHOT(target, snapshotName) \
+    do { \
+        std::filesystem::path _snapDir = std::filesystem::path(__FILE__).parent_path() / "__snapshots__"; \
+        ::keet::Testing::Snapshot::assertMatchesSnapshot((target), (snapshotName), _snapDir.string(), __FILE__, __LINE__); \
+    } while (false)
+
+#define KEET_ASSERT_MATCHES_SNAPSHOT_IN(target, snapshotName, snapshotDir) \
+    ::keet::Testing::Snapshot::assertMatchesSnapshot((target), (snapshotName), (snapshotDir), __FILE__, __LINE__)
 
 // Declarative test definition macro
 #define KEET_TEST(Suite, Name) \
