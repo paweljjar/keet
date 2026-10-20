@@ -7,12 +7,14 @@
 #include "keet/Crypto.h"
 
 #include <algorithm>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <random>
 #include <ranges>
 #include <sstream>
 #include <sys/socket.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -93,8 +95,35 @@ namespace HTTPServer {
     }
 
     std::string ServerResponse::getHeader(const std::string& name, const std::string& fallback) const { // Retrieve an outgoing response header value
-        const auto it = headers.find(name);
-        return it != headers.end() ? it->second : fallback;
+        for (const auto& [k, v] : headers) {
+            if (k.size() == name.size()) {
+                bool match = true;
+                for (size_t i = 0; i < k.size(); ++i) {
+                    if (std::tolower(static_cast<unsigned char>(k[i])) != std::tolower(static_cast<unsigned char>(name[i]))) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) return v;
+            }
+        }
+        return fallback;
+    }
+
+    bool ServerResponse::hasHeader(const std::string& name) const { // Check case-insensitively if an outgoing response header exists
+        for (const auto& [k, _] : headers) {
+            if (k.size() == name.size()) {
+                bool match = true;
+                for (size_t i = 0; i < k.size(); ++i) {
+                    if (std::tolower(static_cast<unsigned char>(k[i])) != std::tolower(static_cast<unsigned char>(name[i]))) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) return true;
+            }
+        }
+        return false;
     }
 
     std::string generateSessionId() { // Generate a pseudo-random unique session identifier string
@@ -195,6 +224,11 @@ namespace HTTPServer {
         });
     }
 
+    Server& Server::use(Middleware middleware) { // Register a middleware function in the execution pipeline
+        _middlewares.push_back(std::move(middleware));
+        return *this;
+    }
+
     void Server::get(const std::string& path, RequestHandler handler)  { _addRoute("GET",  path, std::move(handler)); } // Register a GET route with the specified path and handler function, moving the handler to avoid unnecessary copies
     void Server::post(const std::string& path, RequestHandler handler) { _addRoute("POST", path, std::move(handler)); } // Register a POST route with the specified path and handler function, moving the handler to avoid unnecessary copies
     void Server::put(const std::string& path, RequestHandler handler)  { _addRoute("PUT",  path, std::move(handler)); } // Register a PUT route with the specified path and handler function, moving the handler to avoid unnecessary copies
@@ -204,6 +238,30 @@ namespace HTTPServer {
     void Server::setFallbackGetHandler(RequestHandler handler) { // Register a fallback handler for unmatched HTTP GET requests
         _fallbackGetHandler = std::move(handler);
         _log("Registered fallback GET handler");
+    }
+
+    Server& Server::serveStatic(const std::string& mountPrefix, const std::string& directoryPath, keet::StaticFiles::StaticOptions options) { // Mount a filesystem directory under a URL path prefix for static asset delivery
+        std::error_code ec;
+        std::filesystem::path canonicalDir = std::filesystem::canonical(directoryPath, ec);
+        if (ec) {
+            canonicalDir = std::filesystem::weakly_canonical(directoryPath, ec);
+        }
+
+        std::string prefix = mountPrefix;
+        if (!prefix.starts_with('/')) {
+            prefix = "/" + prefix;
+        }
+        while (prefix.size() > 1 && prefix.ends_with('/')) {
+            prefix.pop_back();
+        }
+
+        _staticMounts.push_back(StaticMount{
+            .mountPrefix = std::move(prefix),
+            .rootDirectory = std::move(canonicalDir),
+            .options = std::move(options)
+        });
+        _log("Mounted static directory: " + mountPrefix + " -> " + directoryPath);
+        return *this;
     }
 
     int Server::getPort() const { // Return the port number that the server is listening on
@@ -407,25 +465,32 @@ namespace HTTPServer {
         return true;
     }
 
-    std::string Server::_getStatusMessage(const int status) { // Return a human-readable message corresponding to an HTTP status code, allowing the server to provide meaningful responses to clients
+    std::string Server::getStatusMessage(const int status) { // Return a human-readable message corresponding to an HTTP status code, allowing the server to provide meaningful responses to clients
         switch (status) {
             case 101: return "Switching Protocols";
-            case HTTP_OK:
-                return "OK";
-            case HTTP_NOT_FOUND:
-                return "Not Found";
-            case HTTP_INTERNAL_SERVER_ERROR:
-                return "Internal Server Error";
+            case HTTP_OK: return "OK";
             case 201: return "Created";
+            case 204: return "No Content";
+            case 301: return "Moved Permanently";
+            case 302: return "Found";
+            case 304: return "Not Modified";
             case 400: return "Bad Request";
+            case 401: return "Unauthorized";
+            case 403: return "Forbidden";
+            case HTTP_NOT_FOUND: return "Not Found";
             case 405: return "Method Not Allowed";
             case 413: return "Payload Too Large";
             case 426: return "Upgrade Required";
             case 431: return "Request Header Fields Too Large";
+            case HTTP_INTERNAL_SERVER_ERROR: return "Internal Server Error";
             case 501: return "Not Implemented";
             default:
                 return "Unknown Status";
         }
+    }
+
+    std::string Server::_getStatusMessage(const int status) { // Look up human-readable reason phrase for a given HTTP status code
+        return getStatusMessage(status);
     }
 
     std::string Server::_buildResponse(const ServerResponse& response) { // Build a complete HTTP response string from the provided ServerResponse object, including the status line, headers, and body, allowing the server to send a properly formatted response to the client
@@ -440,20 +505,28 @@ namespace HTTPServer {
         }
 
         std::ostringstream out;
-        out << "HTTP/1.1 " << response.status << " " << _getStatusMessage(response.status) << "\r\n"
-                    << "Content-Type: " << response.contentType
-                    << (response.charset.empty() ? "" : "; charset=" + response.charset) << "\r\n"
-                    << "Content-Length: " << response.body.size() << "\r\n";
+        out << "HTTP/1.1 " << response.status << " " << getStatusMessage(response.status) << "\r\n"
+            << "Content-Type: " << response.contentType
+            << (response.charset.empty() ? "" : "; charset=" + response.charset) << "\r\n"
+            << "Content-Length: " << response.body.size() << "\r\n";
 
         for (const auto& [name, value] : response.headers) {
             out << name << ": " << value << "\r\n";
         }
 
-        out << "Access-Control-Allow-Origin: *\r\n"
-            << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
-            << "Access-Control-Allow-Headers: Content-Type, X-Session-Id\r\n"
-            << "Access-Control-Expose-Headers: X-Session-Id, X-Route-Path\r\n"
-            << "Connection: close\r\n\r\n"
+        if (!response.hasHeader("Access-Control-Allow-Origin")) {
+            out << "Access-Control-Allow-Origin: *\r\n";
+        }
+        if (!response.hasHeader("Access-Control-Allow-Methods")) {
+            out << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+        }
+        if (!response.hasHeader("Access-Control-Allow-Headers")) {
+            out << "Access-Control-Allow-Headers: Content-Type, X-Session-Id\r\n";
+        }
+        if (!response.hasHeader("Access-Control-Expose-Headers")) {
+            out << "Access-Control-Expose-Headers: X-Session-Id, X-Route-Path\r\n";
+        }
+        out << "Connection: close\r\n\r\n"
             << response.body;
         return out.str();
     }
@@ -528,6 +601,16 @@ namespace HTTPServer {
         ServerRequest request; // Instantiate a ServerRequest object to hold the parsed incoming request data
         ServerResponse response; // Instantiate a ServerResponse object to hold the response data to be generated
 
+        sockaddr_in peerAddr{};
+        socklen_t peerLen = sizeof(peerAddr);
+        if (getpeername(client_fd, reinterpret_cast<sockaddr*>(&peerAddr), &peerLen) == 0) {
+            char ipBuf[INET_ADDRSTRLEN];
+            if (inet_ntop(AF_INET, &peerAddr.sin_addr, ipBuf, sizeof(ipBuf))) {
+                request.remoteAddr = ipBuf;
+            }
+            request.remotePort = ntohs(peerAddr.sin_port);
+        }
+
         const int status = _readRequest(client_fd, request); // Read and parse the incoming HTTP request from the client socket, returning 0 on success or an HTTP status code on error
         if (status < 0) { close(client_fd); return; } // If reading failed or the client disconnected prematurely, close the socket and exit early
 
@@ -567,6 +650,12 @@ namespace HTTPServer {
         }
 
         _dispatch(request, response); // Otherwise, dispatch the valid request to the matching registered route handler
+
+        for (const auto& cb : response.onComplete) { // Run completion hooks (e.g. access loggers)
+            try {
+                if (cb) cb(request, response);
+            } catch (...) {}
+        }
 
         const std::string out = _buildResponse(response); // Serialize the ServerResponse object into a formatted HTTP response string
         write(client_fd, out.c_str(), out.size()); // Write the complete HTTP response string to the client socket
@@ -950,7 +1039,84 @@ namespace HTTPServer {
         sendJson(res, status, Json::Object{{"error", _getStatusMessage(status)}}); // Serialize a JSON object with an "error" key set to the status message and populate the response
     }
 
-    void Server::_dispatch(const ServerRequest& request, ServerResponse& response) { // Route the incoming request to the appropriate registered handler based on method and path
+    void Server::_serveFile(const std::filesystem::path& target, const ServerRequest& request, ServerResponse& response, const keet::StaticFiles::StaticOptions& options) { // Read and transmit a static file with caching and MIME detection
+        std::error_code ec;
+        const size_t fileSize = std::filesystem::file_size(target, ec);
+        if (ec) {
+            _setError(response, HTTP_NOT_FOUND);
+            return;
+        }
+
+        const auto ftime = std::filesystem::last_write_time(target, ec);
+        const auto mtime = ec ? std::chrono::system_clock::time_point{} : keet::StaticFiles::toSystemTime(ftime);
+
+        const std::string etag = options.enableETag ? keet::StaticFiles::generateETag(fileSize, mtime) : "";
+        const std::string cacheControl = keet::StaticFiles::formatCacheControl(options.maxAge, true, options.isImmutable);
+
+        if (keet::StaticFiles::isNotModified(request, etag, mtime)) {
+            keet::StaticFiles::applyNotModified(response, etag, mtime, cacheControl);
+            for (const auto& [k, v] : options.customHeaders) {
+                response.setHeader(k, v);
+            }
+            return;
+        }
+
+        std::ifstream file(target, std::ios::binary);
+        if (!file.is_open()) {
+            _setError(response, HTTP_NOT_FOUND);
+            return;
+        }
+
+        std::string buffer;
+        buffer.resize(fileSize);
+        file.read(buffer.data(), static_cast<std::streamsize>(fileSize));
+        const size_t bytesRead = static_cast<size_t>(file.gcount());
+        if (bytesRead < fileSize) {
+            buffer.resize(bytesRead);
+        }
+
+        response.status = HTTP_OK;
+        const std::string mime = keet::StaticFiles::getMimeType(target.extension().string());
+        response.contentType = mime;
+        if (keet::StaticFiles::isTextMimeType(mime)) {
+            response.charset = "utf-8";
+        }
+        if (options.enableETag && !etag.empty()) {
+            response.setHeader("ETag", etag);
+        }
+        if (options.enableLastModified && mtime != std::chrono::system_clock::time_point{}) {
+            response.setHeader("Last-Modified", keet::StaticFiles::formatHttpDate(mtime));
+        }
+        response.setHeader("Cache-Control", cacheControl);
+        for (const auto& [k, v] : options.customHeaders) {
+            response.setHeader(k, v);
+        }
+
+        if (request.method == "HEAD") {
+            response.body = "";
+        } else {
+            response.body = std::move(buffer);
+        }
+    }
+
+    void Server::_dispatch(ServerRequest& request, ServerResponse& response) { // Route the incoming request through middleware pipeline and to the appropriate registered handler
+        for (const auto& middleware : _middlewares) {
+            if (!middleware) continue;
+            try {
+                if (!middleware(request, response)) {
+                    return; // Short-circuited by middleware
+                }
+            } catch (const std::exception& e) {
+                _logError(std::string("Middleware threw: ") + e.what());
+                _setError(response, HTTP_INTERNAL_SERVER_ERROR);
+                return;
+            } catch (...) {
+                _logError("Unknown exception in middleware pipeline");
+                _setError(response, HTTP_INTERNAL_SERVER_ERROR);
+                return;
+            }
+        }
+
         if (request.method == "OPTIONS") { // Handle CORS preflight OPTIONS requests automatically
             response.status = HTTP_OK; // Respond with 200 OK for preflight checks
             response.body = ""; // Empty body for OPTIONS response
@@ -968,6 +1134,77 @@ namespace HTTPServer {
                     _setError(response, HTTP_INTERNAL_SERVER_ERROR); // Set the response to HTTP 500 (Internal Server Error) to notify the client of the failure
                 }
                 return; // Return after the route handler has finished executing
+            }
+        }
+
+        // Static file serving for GET and HEAD requests
+        if (request.method == "GET" || request.method == "HEAD") {
+            for (const auto& mount : _staticMounts) {
+                bool matches = false;
+                std::string subPath;
+
+                if (mount.mountPrefix == "/") {
+                    matches = true;
+                    subPath = request.path.starts_with('/') ? request.path.substr(1) : request.path;
+                    if (subPath.empty()) subPath = mount.options.defaultFile;
+                } else if (request.path == mount.mountPrefix || request.path == mount.mountPrefix + "/") {
+                    matches = true;
+                    subPath = mount.options.defaultFile;
+                } else if (request.path.starts_with(mount.mountPrefix + "/")) {
+                    matches = true;
+                    subPath = request.path.substr(mount.mountPrefix.size() + 1);
+                }
+
+                if (matches) {
+                    subPath = _urlDecode(subPath);
+
+                    // Path traversal protection
+                    std::filesystem::path relPath(subPath);
+                    bool hasTraversal = false;
+                    for (const auto& part : relPath) {
+                        if (part == "..") {
+                            hasTraversal = true;
+                            break;
+                        }
+                    }
+                    if (hasTraversal) {
+                        _setError(response, 403);
+                        return;
+                    }
+
+                    std::filesystem::path target = mount.rootDirectory / relPath;
+                    std::error_code ec;
+                    auto canonicalTarget = std::filesystem::weakly_canonical(target, ec);
+                    if (!ec && std::filesystem::is_directory(canonicalTarget)) {
+                        canonicalTarget = std::filesystem::weakly_canonical(canonicalTarget / mount.options.defaultFile, ec);
+                    }
+
+                    if (!ec && std::filesystem::exists(canonicalTarget) && std::filesystem::is_regular_file(canonicalTarget)) {
+                        auto rel = canonicalTarget.lexically_relative(mount.rootDirectory);
+                        if (rel.empty() || rel.string().starts_with("..")) {
+                            _setError(response, 403);
+                            return;
+                        }
+
+                        if (!mount.options.allowHiddenFiles) {
+                            bool isHidden = false;
+                            for (const auto& part : rel) {
+                                std::string s = part.string();
+                                if (s.size() > 1 && s.starts_with('.')) {
+                                    isHidden = true;
+                                    break;
+                                }
+                            }
+                            if (isHidden) {
+                                _setError(response, 403);
+                                return;
+                            }
+                        }
+
+                        _serveFile(canonicalTarget, request, response, mount.options);
+                        return;
+                    }
+                }
             }
         }
 

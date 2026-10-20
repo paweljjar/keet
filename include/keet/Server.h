@@ -13,10 +13,12 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+#include <filesystem>
 #include <netinet/in.h>
 
 #include "Json.h"
 #include "WebSocket.h"
+#include "StaticFiles.h"
 
 namespace HTTPServer {
 #define HTTP_INTERNAL_SERVER_ERROR 500 // HTTP status code 500: Server encountered an unexpected condition preventing it from fulfilling the request
@@ -47,6 +49,8 @@ namespace HTTPServer {
         std::map<std::string, std::string> query; // Map of parsed URL query parameters (key-value pairs)
         std::map<std::string, std::string> headers; // Map of HTTP request headers with lowercase keys
         std::string body; // Raw payload body received with the HTTP request
+        std::string remoteAddr; // Client IPv4 address or peer address
+        int remotePort = 0; // Client remote TCP port
 
         [[nodiscard]] bool hasQuery(const std::string& key) const; // Check if a query parameter exists in the request
         [[nodiscard]] std::string getQuery(const std::string& key, const std::string& fallback = "") const; // Retrieve a query parameter value, returning fallback if not found
@@ -65,15 +69,18 @@ namespace HTTPServer {
         std::string contentType = "text/plain"; // Content-Type header value specifying the MIME type, defaults to text/plain
         std::string charset;
         std::map<std::string, std::string> headers; // Custom outgoing HTTP response headers
+        std::vector<std::function<void(const ServerRequest&, const ServerResponse&)>> onComplete; // Callbacks invoked after request processing/dispatch finishes
 
         void setHeader(std::string name, std::string value); // Set or overwrite an outgoing HTTP response header
         [[nodiscard]] std::string getHeader(const std::string& name, const std::string& fallback = "") const; // Retrieve an outgoing response header value
+        [[nodiscard]] bool hasHeader(const std::string& name) const; // Check case-insensitively if an outgoing response header exists
     };
 
     std::string generateSessionId(); // Generate a pseudo-random unique session identifier string
     std::string extractOrCreateSessionId(const ServerRequest& req, const std::string& cookieName = "lorikeet_session"); // Extract session ID from request headers/cookies with fallback generation
 
     using RequestHandler = std::function<void(const ServerRequest&, ServerResponse&)>; // Function type definition for route handlers processing request and generating response
+    using Middleware = std::function<bool(ServerRequest&, ServerResponse&)>; // Function type definition for middleware processing request/response before route dispatch
 
     class Server { // Main HTTP server class managing socket setup, routing table, connection acceptance, and request dispatching
         public:
@@ -82,11 +89,13 @@ namespace HTTPServer {
             void start(); // Start the server by creating, binding, and listening on socket, then entering connection loop
             std::thread startAsync(); // Start the server asynchronously on a background thread and return the thread handle
             void stop(); // Stop the server accept loop and shutdown worker thread pool
+            Server& use(Middleware middleware); // Register a middleware callback executed sequentially on all incoming requests
             void get(const std::string& path, RequestHandler handler); // Register a route handler callback for HTTP GET requests at the given path
             void post(const std::string& path, RequestHandler handler); // Register a route handler callback for HTTP POST requests at the given path
             void put(const std::string& path, RequestHandler handler); // Register a route handler callback for HTTP PUT requests at the given path
             void del(const std::string& path, RequestHandler handler); // Register a route handler callback for HTTP DELETE requests at the given path
             void route(const std::string& method, const std::string& path, RequestHandler handler); // Register a route handler callback for arbitrary HTTP method at the given path
+            Server& serveStatic(const std::string& mountPrefix, const std::string& directoryPath, keet::StaticFiles::StaticOptions options = {}); // Mount a filesystem directory under a URL path prefix for static asset delivery
             void setFallbackGetHandler(RequestHandler handler); // Register a fallback handler for unmatched HTTP GET requests (e.g. SPA client-side routes)
             void websocket(const std::string& path, WebSocketHandlers handlers); // Register a WebSocket endpoint with event callbacks
             void websocket(const std::string& path, WebSocketMessageHandler onMessage); // Register a simple text-message WebSocket endpoint
@@ -96,6 +105,7 @@ namespace HTTPServer {
             [[nodiscard]] size_t activeWebSocketCount(); // Return the number of currently active WebSocket connections
             int getPort() const; // Return the configured port number the server listens on
             const std::string& getName() const; // Return the configured name of the server
+            static std::string getStatusMessage(int status); // Return human-readable message corresponding to an HTTP status code
             size_t getThreadPoolSize() const; // Return configured or effective thread pool worker count
             void setThreadPoolSize(size_t size); // Set the number of worker threads to use (must be called before start())
 
@@ -117,8 +127,16 @@ namespace HTTPServer {
             std::string _name; // Optional identifier name used to prefix server log messages
             int _server_fd; // Socket file descriptor for the server listener
             sockaddr_in _address; // Socket address structure holding IPv4 address and port configuration
+            std::vector<Middleware> _middlewares; // Ordered list of registered middleware callbacks executed sequentially prior to route matching
             std::map<std::string, std::map<std::string, RequestHandler>> _routes; // Routing table mapping HTTP method to path to corresponding handler function
             RequestHandler _fallbackGetHandler; // Optional fallback handler invoked when an HTTP GET request path is not explicitly registered
+
+            struct StaticMount { // Registered static filesystem mount mapping a URL prefix to a root directory
+                std::string mountPrefix; // URL prefix, e.g. "/public"
+                std::filesystem::path rootDirectory; // Local filesystem directory path
+                keet::StaticFiles::StaticOptions options; // Static asset delivery configuration
+            };
+            std::vector<StaticMount> _staticMounts; // Registered static file mounts evaluated during GET/HEAD dispatch
 
             std::map<std::string, WebSocketHandlers> _wsRoutes; // Registered WebSocket endpoint routes by path
             std::map<int, std::shared_ptr<ActiveWsConnection>> _wsConnections; // Active WebSocket client connections keyed by fd
@@ -167,7 +185,8 @@ namespace HTTPServer {
             static int _readRequest(int client_fd, ServerRequest& request); // Read full HTTP request from socket, parsing headers and streaming body per Content-Length
 
             static void _setError(ServerResponse& res, int status); // Populate a ServerResponse with a standard JSON error message for given status code
-            void _dispatch(const ServerRequest& request, ServerResponse& response); // Look up matching route handler for request method and path, handling 404, 405, and exceptions
+            void _serveFile(const std::filesystem::path& target, const ServerRequest& request, ServerResponse& response, const keet::StaticFiles::StaticOptions& options); // Read and transmit a static file with caching and MIME detection
+            void _dispatch(ServerRequest& request, ServerResponse& response); // Look up matching route handler for request method and path, handling 404, 405, and exceptions
     };
 }
 

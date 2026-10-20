@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Define the static library target
 add_library(keet STATIC
         src/Server.cpp
+        src/Middleware.cpp
+        src/StaticFiles.cpp
         src/UIEngine.cpp
         src/Json.cpp
         src/Database.cpp
