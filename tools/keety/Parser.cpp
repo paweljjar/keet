@@ -503,7 +503,9 @@ namespace Keety {
 
     std::shared_ptr<ElementNode> Parser::_parseElement() {
         SourceLocation loc = _consume(TokenKind::LessThan, "Expected '<'").loc;
-        std::string tagName = _consume(TokenKind::Identifier, "Expected HTML tag name").text;
+        std::string tagName = (_check(TokenKind::Identifier) || _check(TokenKind::KwTable))
+                              ? _advance().text
+                              : _consume(TokenKind::Identifier, "Expected HTML tag name").text;
         auto elem = std::make_shared<ElementNode>(tagName, loc);
 
         // Parse attributes until '>' or '/>'
@@ -536,7 +538,9 @@ namespace Keety {
         }
 
         _consume(TokenKind::LessThanSlash, "Expected '</' closing tag");
-        std::string closeTag = _consume(TokenKind::Identifier, "Expected closing tag name").text;
+        std::string closeTag = (_check(TokenKind::Identifier) || _check(TokenKind::KwTable))
+                               ? _advance().text
+                               : _consume(TokenKind::Identifier, "Expected closing tag name").text;
         if (closeTag != tagName) {
             throw ParserException("Mismatched closing tag: expected '</" + tagName + ">', got '</" + closeTag + ">'", _peek().loc);
         }

@@ -167,6 +167,22 @@ namespace Keety {
         os << "#include <utility>\n";
         os << "#include <memory>\n\n";
 
+        if (_appMode) {
+            os << "#include <keet/Database.h>\n";
+            os << "#include <keet/Server.h>\n";
+            os << "using HTTPServer::Json;\n\n";
+
+            bool hasDb = (_ast.server && _ast.server->database != nullptr);
+            if (hasDb) {
+                std::string dbName = _ast.server->database->name;
+                std::string dbFile = (!_ast.server->database->filePath.empty())
+                                     ? _ast.server->database->filePath
+                                     : (comp + ".db");
+                os << "// Global Database instance\n";
+                os << "static HTTPServer::Database " << dbName << "(\"" << dbFile << "\", true);\n\n";
+            }
+        }
+
         os << "namespace Generated {\n\n";
 
         // Phase 2.2: Static String Interning
@@ -464,9 +480,6 @@ namespace Keety {
                              : (comp + ".db");
 
         if (hasDb) {
-            os << "// Global Database instance\n";
-            os << "static HTTPServer::Database " << dbName << "(\"" << dbFile << "\", true);\n\n";
-
             os << "static void _keet_init_database() {\n";
             for (const auto& table : _ast.server->database->tables) {
                 os << "    if (!" << dbName << ".hasTable(\"" << table->name << "\")) {\n";
