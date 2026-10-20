@@ -71,6 +71,9 @@ namespace Keety {
         if (text == "table") return Token(TokenKind::KwTable, text, loc);
         if (text == "primary_key") return Token(TokenKind::KwPrimaryKey, text, loc);
         if (text == "auto_increment") return Token(TokenKind::KwAutoIncrement, text, loc);
+        if (text == "unique") return Token(TokenKind::KwUnique, text, loc);
+        if (text == "not_null" || text == "required") return Token(TokenKind::KwNotNull, text, loc);
+        if (text == "default") return Token(TokenKind::KwDefault, text, loc);
         if (text == "backend") return Token(TokenKind::KwBackend, text, loc);
         if (text == "frontend") return Token(TokenKind::KwFrontend, text, loc);
         if (text == "get") return Token(TokenKind::KwGet, text, loc);

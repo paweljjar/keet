@@ -76,6 +76,9 @@ namespace Keety {
         KwTable, // table
         KwPrimaryKey, // primary_key
         KwAutoIncrement, // auto_increment
+        KwUnique, // unique
+        KwNotNull, // not_null or required
+        KwDefault, // default
         KwBackend, // backend
         KwFrontend, // frontend
         KwGet, // get
@@ -113,7 +116,9 @@ namespace Keety {
                    kind == TokenKind::KwElse || kind == TokenKind::KwFor ||
                    kind == TokenKind::KwIn || kind == TokenKind::KwDatabase ||
                    kind == TokenKind::KwTable || kind == TokenKind::KwPrimaryKey ||
-                   kind == TokenKind::KwAutoIncrement || kind == TokenKind::KwBackend ||
+                   kind == TokenKind::KwAutoIncrement || kind == TokenKind::KwUnique ||
+                   kind == TokenKind::KwNotNull || kind == TokenKind::KwDefault ||
+                   kind == TokenKind::KwBackend ||
                    kind == TokenKind::KwFrontend || kind == TokenKind::KwGet ||
                    kind == TokenKind::KwPost || kind == TokenKind::KwPut ||
                    kind == TokenKind::KwDelete;
@@ -167,6 +172,9 @@ namespace Keety {
                 case TokenKind::KwTable: return "table";
                 case TokenKind::KwPrimaryKey: return "primary_key";
                 case TokenKind::KwAutoIncrement: return "auto_increment";
+                case TokenKind::KwUnique: return "unique";
+                case TokenKind::KwNotNull: return "not_null";
+                case TokenKind::KwDefault: return "default";
                 case TokenKind::KwBackend: return "backend";
                 case TokenKind::KwFrontend: return "frontend";
                 case TokenKind::KwGet: return "get";

@@ -201,7 +201,7 @@ int main() {
   database db("todos.db") {
     table todos {
       id: int primary_key auto_increment,
-      title: string,
+      title: string not_null unique,
       completed: bool default false
     };
   };
@@ -241,6 +241,9 @@ int main() {
     assert(parsedFile->server->database->tables[0]->name == "todos");
     assert(parsedFile->server->database->tables[0]->columns.size() == 3);
     assert(parsedFile->server->database->tables[0]->columns[0]->isPrimaryKey);
+    assert(parsedFile->server->database->tables[0]->columns[1]->isNotNull);
+    assert(parsedFile->server->database->tables[0]->columns[1]->isUnique);
+    assert(parsedFile->server->database->tables[0]->columns[2]->defaultValueExpr == "false");
     assert(parsedFile->server->backend != nullptr);
     assert(parsedFile->server->backend->port == 8081);
     assert(parsedFile->server->backend->routes.size() == 2);

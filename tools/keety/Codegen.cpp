@@ -22,9 +22,10 @@ namespace Keety {
 
     std::string Codegen::_mapDbType(const std::string& typeName) const {
         if (typeName == "int" || typeName == "int64" || typeName == "integer") return "integer";
-        if (typeName == "float" || typeName == "double") return "float";
+        if (typeName == "float" || typeName == "double" || typeName == "real") return "float";
         if (typeName == "bool" || typeName == "boolean") return "boolean";
-        if (typeName == "string") return "string";
+        if (typeName == "string" || typeName == "text") return "string";
+        if (typeName == "blob" || typeName == "bytes") return "blob";
         if (typeName == "array") return "array";
         if (typeName == "object") return "object";
         return typeName;
@@ -480,6 +481,15 @@ namespace Keety {
                     }
                     if (col->isAutoIncrement) {
                         os << "            col[\"auto_increment\"] = true;\n";
+                    }
+                    if (col->isUnique) {
+                        os << "            col[\"unique\"] = true;\n";
+                    }
+                    if (col->isNotNull) {
+                        os << "            col[\"required\"] = true;\n";
+                    }
+                    if (!col->defaultValueExpr.empty()) {
+                        os << "            col[\"default\"] = " << col->defaultValueExpr << ";\n";
                     }
                     os << "            scheme[\"" << col->name << "\"] = col;\n";
                     os << "        }\n";

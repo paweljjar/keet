@@ -114,14 +114,17 @@ namespace Keety {
         _consume(TokenKind::Colon, "Expected ':' after column name");
         col->typeName = _consume(TokenKind::Identifier, "Expected column type name").text;
 
-        // Parse modifiers: primary_key, auto_increment, default <val>
+        // Parse modifiers: primary_key, auto_increment, unique, not_null, default <val>
         while (!_isAtEnd() && !_check(TokenKind::Comma) && !_check(TokenKind::RightBrace)) {
             if (_match(TokenKind::KwPrimaryKey)) {
                 col->isPrimaryKey = true;
             } else if (_match(TokenKind::KwAutoIncrement)) {
                 col->isAutoIncrement = true;
-            } else if (_peek().text == "default") {
-                _advance(); // Consume "default"
+            } else if (_match(TokenKind::KwUnique)) {
+                col->isUnique = true;
+            } else if (_match(TokenKind::KwNotNull)) {
+                col->isNotNull = true;
+            } else if (_match(TokenKind::KwDefault)) {
                 if (_check(TokenKind::StringLiteral) || _check(TokenKind::NumberLiteral) || _check(TokenKind::Identifier)) {
                     col->defaultValueExpr = _advance().text;
                 }
