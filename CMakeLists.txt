@@ -1,8 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
-project(keet VERSION 1.0.0 LANGUAGES CXX)
+project(keet VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(Threads REQUIRED)
 
 # Sanitizer options
 option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
@@ -41,6 +43,20 @@ add_library(keet STATIC
         src/WebSocket.cpp
         src/Testing.cpp
         src/TestHarness.cpp
+        src/sqlite3.c
+)
+
+target_compile_definitions(keet PRIVATE
+        SQLITE_THREADSAFE=1
+        SQLITE_ENABLE_JSON1
+        SQLITE_DEFAULT_WAL_SYNCHRONOUS=1
+        SQLITE_DEFAULT_MEMSTATUS=0
+        SQLITE_OMIT_DEPRECATED
+)
+
+target_link_libraries(keet PUBLIC
+        Threads::Threads
+        ${CMAKE_DL_LIBS}
 )
 
 # Define public include directories so consuming apps can find #include <keet/Server.h>
