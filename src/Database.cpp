@@ -87,11 +87,15 @@ namespace HTTPServer {
 
     void Database::_initPragmas() {
         if (!_db) return;
+        execute("PRAGMA busy_timeout=5000;");
         if (!_isMemory) {
-            execute("PRAGMA journal_mode=WAL;");
+            try {
+                execute("PRAGMA journal_mode=WAL;");
+            } catch (...) {
+                // Ignore busy if another connection already configured WAL
+            }
             execute("PRAGMA synchronous=NORMAL;");
         }
-        execute("PRAGMA busy_timeout=5000;");
         execute("PRAGMA foreign_keys=ON;");
         execute("CREATE TABLE IF NOT EXISTS _keet_schemas (table_name TEXT PRIMARY KEY, schema_json TEXT);");
     }
@@ -343,10 +347,18 @@ namespace HTTPServer {
         Json::Array res = query("SELECT schema_json FROM _keet_schemas WHERE table_name=? LIMIT 1;", {tableName});
         if (!res.empty()) {
             const auto& obj = res[0].asObject();
-            if (obj.contains("schema_json") && obj.at("schema_json").isString()) {
-                Json parsed = Json::parse(obj.at("schema_json").asString());
-                if (parsed.isObject()) {
-                    return parsed.asObject();
+            if (obj.contains("schema_json")) {
+                const auto& val = obj.at("schema_json");
+                if (val.isObject()) {
+                    return val.asObject();
+                }
+                if (val.isString()) {
+                    try {
+                        Json parsed = Json::parse(val.asString());
+                        if (parsed.isObject()) {
+                            return parsed.asObject();
+                        }
+                    } catch (...) {}
                 }
             }
         }

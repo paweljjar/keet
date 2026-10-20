@@ -1,0 +1,51 @@
+<server>
+  database db(":memory:") {
+    table users {
+      id: int primary_key auto_increment,
+      username: string not_null unique,
+      email: string not_null,
+      is_admin: bool default false
+    };
+    table posts {
+      id: int primary_key auto_increment,
+      user_id: int not_null,
+      title: string not_null,
+      tags: array
+    };
+  };
+
+  backend api(port: 8095, threads: 2) {
+    get "/api/users" => (req) {
+      return db.table("users").find();
+    };
+    post "/api/users" => (req) {
+      return db.table("users").insert(req.json());
+    };
+  };
+</server>
+
+<script>
+  state userCount: int = 0;
+  state status: string = "idle";
+
+  def incrementCount() {
+    userCount += 1;
+    status = "active";
+  }
+</script>
+
+<template>
+  <div class="db-test">
+    <h1 class="title">Database KeetScript Test</h1>
+    <span class="user-count">{userCount}</span>
+    <span class="status-msg">{status}</span>
+    <button class="btn-inc" onClick={incrementCount}>Increment</button>
+  </div>
+</template>
+
+<style>
+  .db-test {
+    padding: 1rem;
+    color: #333;
+  }
+</style>

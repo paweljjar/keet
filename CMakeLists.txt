@@ -101,3 +101,6 @@ keet_add_test(keet_test_event_dispatcher tests/test_event_dispatcher.cpp)
 
 # Mock Session & Snapshot Testing unit test executable
 keet_add_test(keet_test_snapshots_and_session tests/test_snapshots_and_session.cpp)
+
+# Embedded SQLite Database Engine & KeetScript Component unit test executable
+keet_add_test(keet_test_database tests/test_database.cpp tests/DatabaseTest.keet)
