@@ -125,6 +125,8 @@ namespace keet::Testing {
 
 } // namespace keet::Testing
 
+#include <keet/TestHarness.h>
+
 // Assertion macros
 #define KEET_ASSERT(expr) \
     do { \
@@ -168,6 +170,36 @@ namespace keet::Testing {
             ::keet::Testing::fail(std::string("Expected no exception, but caught: ") + _keet_ex.what() + " from " #expr, __FILE__, __LINE__); \
         } catch (...) { \
             ::keet::Testing::fail("Expected no exception, but caught unknown exception from " #expr, __FILE__, __LINE__); \
+        } \
+    } while (false)
+
+// Headless VDOM Test element assertion macros
+#define KEET_ASSERT_EXISTS(element) \
+    ::keet::Testing::Detail::assertTrue((element).exists(), "Element exists: " #element, __FILE__, __LINE__)
+
+#define KEET_ASSERT_NOT_EXISTS(element) \
+    ::keet::Testing::Detail::assertFalse((element).exists(), "Element does not exist: " #element, __FILE__, __LINE__)
+
+#define KEET_ASSERT_TEXT(element, expectedText) \
+    ::keet::Testing::Detail::assertEq((element).text(), (expectedText), #element ".text()", #expectedText, __FILE__, __LINE__)
+
+#define KEET_ASSERT_CONTAINS_TEXT(element, substring) \
+    do { \
+        const std::string _actualText = (element).text(); \
+        const std::string _expectedSub = (substring); \
+        if (_actualText.find(_expectedSub) == std::string::npos) { \
+            ::keet::Testing::fail("Expected text of " #element " (\"" + _actualText + "\") to contain \"" + _expectedSub + "\"", __FILE__, __LINE__); \
+        } \
+    } while (false)
+
+#define KEET_ASSERT_ATTR(element, attrName, expectedVal) \
+    ::keet::Testing::Detail::assertEq((element).attr(attrName), (expectedVal), #element ".attr(" #attrName ")", #expectedVal, __FILE__, __LINE__)
+
+#define KEET_ASSERT_HAS_CLASS(element, className) \
+    do { \
+        const std::string _cls = (className); \
+        if (!(element).hasClass(_cls)) { \
+            ::keet::Testing::fail("Expected " #element " to have class \"" + _cls + "\", but had: \"" + (element).attr("class") + "\"", __FILE__, __LINE__); \
         } \
     } while (false)
 

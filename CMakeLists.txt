@@ -40,6 +40,7 @@ add_library(keet STATIC
         src/Crypto.cpp
         src/WebSocket.cpp
         src/Testing.cpp
+        src/TestHarness.cpp
 )
 
 # Define public include directories so consuming apps can find #include <keet/Server.h>
@@ -78,3 +79,10 @@ add_executable(keet_test_framework
 )
 target_link_libraries(keet_test_framework PRIVATE keet)
 add_test(NAME keet_test_framework COMMAND keet_test_framework)
+
+# Headless VDOM Test Harness unit test executable
+add_executable(keet_test_vdom_harness
+        tests/test_vdom_harness.cpp
+)
+target_link_libraries(keet_test_vdom_harness PRIVATE keet)
+add_test(NAME keet_test_vdom_harness COMMAND keet_test_vdom_harness)
