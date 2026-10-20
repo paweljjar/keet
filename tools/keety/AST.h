@@ -82,9 +82,11 @@ namespace Keety {
 
     struct TableColumnDecl : public ASTNode { // Column schema declaration inside table <name> { ... }
         std::string name; // Column name (e.g. "id", "title")
-        std::string typeName = "string"; // Data type ("int", "string", "bool", "float", "array", "object")
+        std::string typeName = "string"; // Data type ("int", "string", "bool", "float", "array", "object", "blob")
         bool isPrimaryKey = false; // primary_key
         bool isAutoIncrement = false; // auto_increment
+        bool isUnique = false; // unique
+        bool isNotNull = false; // not_null / required
         std::string defaultValueExpr; // Optional default value expression
 
         explicit TableColumnDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}

@@ -71,6 +71,9 @@ namespace Keety {
         if (text == "table") return Token(TokenKind::KwTable, text, loc);
         if (text == "primary_key") return Token(TokenKind::KwPrimaryKey, text, loc);
         if (text == "auto_increment") return Token(TokenKind::KwAutoIncrement, text, loc);
+        if (text == "unique") return Token(TokenKind::KwUnique, text, loc);
+        if (text == "not_null" || text == "required") return Token(TokenKind::KwNotNull, text, loc);
+        if (text == "default") return Token(TokenKind::KwDefault, text, loc);
         if (text == "backend") return Token(TokenKind::KwBackend, text, loc);
         if (text == "frontend") return Token(TokenKind::KwFrontend, text, loc);
         if (text == "get") return Token(TokenKind::KwGet, text, loc);
@@ -165,6 +168,24 @@ namespace Keety {
                 } else if (c == '=' && _peek(1) == '>') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::FatArrow, "=>", loc);
+                } else if (c == '=' && _peek(1) == '=') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, "==", loc);
+                } else if (c == '!' && _peek(1) == '=') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, "!=", loc);
+                } else if (c == '<' && _peek(1) == '=') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, "<=", loc);
+                } else if (c == '>' && _peek(1) == '=') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, ">=", loc);
+                } else if (c == '&' && _peek(1) == '&') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, "&&", loc);
+                } else if (c == '|' && _peek(1) == '|') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, "||", loc);
                 } else if (c == '{') {
                     _advance();
                     tokens.emplace_back(TokenKind::LeftBrace, "{", loc);
@@ -183,6 +204,9 @@ namespace Keety {
                 } else if (c == ']') {
                     _advance();
                     tokens.emplace_back(TokenKind::RightBracket, "]", loc);
+                } else if (c == ':' && _peek(1) == ':') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Colon, "::", loc);
                 } else if (c == ':') {
                     _advance();
                     tokens.emplace_back(TokenKind::Colon, ":", loc);
@@ -226,6 +250,30 @@ namespace Keety {
                 } else if (c == '=' && _peek(1) == '>') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::FatArrow, "=>", loc);
+                } else if (c == '=' && _peek(1) == '=') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, "==", loc);
+                } else if (c == '!' && _peek(1) == '=') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, "!=", loc);
+                } else if (c == '<' && _peek(1) == '=') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, "<=", loc);
+                } else if (c == '>' && _peek(1) == '=') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, ">=", loc);
+                } else if (c == '&' && _peek(1) == '&') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, "&&", loc);
+                } else if (c == '|' && _peek(1) == '|') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, "||", loc);
+                } else if (c == '+' && _peek(1) == '+') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, "++", loc);
+                } else if (c == '-' && _peek(1) == '-') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, "--", loc);
                 } else if (c == '+' && _peek(1) == '=') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::PlusAssign, "+=", loc);
@@ -250,6 +298,9 @@ namespace Keety {
                 } else if (c == ']') {
                     _advance();
                     tokens.emplace_back(TokenKind::RightBracket, "]", loc);
+                } else if (c == ':' && _peek(1) == ':') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Colon, "::", loc);
                 } else if (c == ':') {
                     _advance();
                     tokens.emplace_back(TokenKind::Colon, ":", loc);
@@ -415,11 +466,32 @@ namespace Keety {
                 if (_peek() == 'f' && _peek(1) == 'o' && _peek(2) == 'r' && std::isspace(static_cast<unsigned char>(_peek(3)))) {
                     _advance(); _advance(); _advance();
                     tokens.emplace_back(TokenKind::KwFor, "for", loc);
-                    continue;
-                }
-                if (_peek() == 'i' && _peek(1) == 'n' && std::isspace(static_cast<unsigned char>(_peek(2)))) {
-                    _advance(); _advance();
-                    tokens.emplace_back(TokenKind::KwIn, "in", loc);
+                    _skipWhitespaceAndComments();
+                    SourceLocation idLoc = _currentLoc();
+                    std::string itemIdent;
+                    while (!_isAtEnd() && (std::isalnum(static_cast<unsigned char>(_peek())) || _peek() == '_')) {
+                        itemIdent += _advance();
+                    }
+                    tokens.emplace_back(TokenKind::Identifier, itemIdent, idLoc);
+                    _skipWhitespaceAndComments();
+                    if (_peek() == 'i' && _peek(1) == 'n' && std::isspace(static_cast<unsigned char>(_peek(2)))) {
+                        SourceLocation inLoc = _currentLoc();
+                        _advance(); _advance();
+                        tokens.emplace_back(TokenKind::KwIn, "in", inLoc);
+                    }
+                    _skipWhitespaceAndComments();
+                    size_t collStart = _cursor;
+                    while (!_isAtEnd() && _peek() != ':') {
+                        _advance();
+                    }
+                    std::string collExpr = _source.substr(collStart, _cursor - collStart);
+                    while (!collExpr.empty() && std::isspace(static_cast<unsigned char>(collExpr.back()))) collExpr.pop_back();
+                    tokens.emplace_back(TokenKind::RawText, collExpr, _currentLoc());
+                    if (_peek() == ':') {
+                        SourceLocation cLoc = _currentLoc();
+                        _advance();
+                        tokens.emplace_back(TokenKind::Colon, ":", cLoc);
+                    }
                     continue;
                 }
                 // Otherwise, read raw text until next '<', '{', or newline before potential control flow

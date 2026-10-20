@@ -114,14 +114,17 @@ namespace Keety {
         _consume(TokenKind::Colon, "Expected ':' after column name");
         col->typeName = _consume(TokenKind::Identifier, "Expected column type name").text;
 
-        // Parse modifiers: primary_key, auto_increment, default <val>
+        // Parse modifiers: primary_key, auto_increment, unique, not_null, default <val>
         while (!_isAtEnd() && !_check(TokenKind::Comma) && !_check(TokenKind::RightBrace)) {
             if (_match(TokenKind::KwPrimaryKey)) {
                 col->isPrimaryKey = true;
             } else if (_match(TokenKind::KwAutoIncrement)) {
                 col->isAutoIncrement = true;
-            } else if (_peek().text == "default") {
-                _advance(); // Consume "default"
+            } else if (_match(TokenKind::KwUnique)) {
+                col->isUnique = true;
+            } else if (_match(TokenKind::KwNotNull)) {
+                col->isNotNull = true;
+            } else if (_match(TokenKind::KwDefault)) {
                 if (_check(TokenKind::StringLiteral) || _check(TokenKind::NumberLiteral) || _check(TokenKind::Identifier)) {
                     col->defaultValueExpr = _advance().text;
                 }
@@ -500,7 +503,9 @@ namespace Keety {
 
     std::shared_ptr<ElementNode> Parser::_parseElement() {
         SourceLocation loc = _consume(TokenKind::LessThan, "Expected '<'").loc;
-        std::string tagName = _consume(TokenKind::Identifier, "Expected HTML tag name").text;
+        std::string tagName = (_check(TokenKind::Identifier) || _check(TokenKind::KwTable))
+                              ? _advance().text
+                              : _consume(TokenKind::Identifier, "Expected HTML tag name").text;
         auto elem = std::make_shared<ElementNode>(tagName, loc);
 
         // Parse attributes until '>' or '/>'
@@ -533,7 +538,9 @@ namespace Keety {
         }
 
         _consume(TokenKind::LessThanSlash, "Expected '</' closing tag");
-        std::string closeTag = _consume(TokenKind::Identifier, "Expected closing tag name").text;
+        std::string closeTag = (_check(TokenKind::Identifier) || _check(TokenKind::KwTable))
+                               ? _advance().text
+                               : _consume(TokenKind::Identifier, "Expected closing tag name").text;
         if (closeTag != tagName) {
             throw ParserException("Mismatched closing tag: expected '</" + tagName + ">', got '</" + closeTag + ">'", _peek().loc);
         }

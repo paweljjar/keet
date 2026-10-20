@@ -68,6 +68,8 @@ namespace Keety {
                 _out << "Column: " << node.name << ": " << node.typeName;
                 if (node.isPrimaryKey) _out << " primary_key";
                 if (node.isAutoIncrement) _out << " auto_increment";
+                if (node.isUnique) _out << " unique";
+                if (node.isNotNull) _out << " not_null";
                 if (!node.defaultValueExpr.empty()) _out << " default " << node.defaultValueExpr;
                 _out << "\n";
             }

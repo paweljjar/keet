@@ -6,8 +6,11 @@
 #define LORIKEET_DATABASE_H
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "Json.h"
+
+struct sqlite3; // Forward declaration of native SQLite handle
 
 namespace HTTPServer {
     class Database;
@@ -16,45 +19,70 @@ namespace HTTPServer {
         public:
             TableProxy(Database& db, std::string tableName);
             [[nodiscard]] Json::Array select(const Json::Object& where = {}) const;
+            [[nodiscard]] Json::Array select(const std::function<bool(const Json::Object&)>& where) const;
             [[nodiscard]] Json::Array find(const Json::Object& where = {}) const;
+            [[nodiscard]] Json::Array find(const std::function<bool(const Json::Object&)>& where) const;
+            [[nodiscard]] size_t count(const Json::Object& where = {}) const;
             Json::Object insert(const Json::Object& record);
             Json::Array update(const Json::Object& updates, const Json::Object& where = {});
+            Json::Array update(const Json::Object& updates, const std::function<bool(const Json::Object&)>& where);
             Json::Array remove(const Json::Object& where = {});
+            Json::Array remove(const std::function<bool(const Json::Object&)>& where);
         private:
             Database& _db;
             std::string _table;
     };
 
-    class Database { // Simple file-backed JSON database that persists collections as key-value mappings
+    class Database { // High-performance embedded SQLite database engine with WAL concurrency
         public:
-            explicit Database(std::string path, bool createIfNotExists = false); // Constructor that initializes database file path and loads or initializes the JSON file
+            explicit Database(std::string path, bool createIfNotExists = false);
+            ~Database();
 
-            Database(const Database&) = delete; // Prevent copy construction to avoid concurrent access issues
-            Database& operator=(const Database&) = delete; // Prevent copy assignment to avoid concurrent access issues
+            Database(const Database&) = delete;
+            Database& operator=(const Database&) = delete;
 
-            const std::string& getPath() const; // Return a const reference to the database file path
-            size_t collectionCount() const; // Return the number of collections (top-level keys) currently stored in the database
-            bool hasTable(const std::string& tableName) const; // Check if a table with the given name exists in the database
-            TableProxy table(std::string tableName); // Return an ergonomic TableProxy for fluent queries on the specified table
-            bool createTable(const std::string& tableName, const Json::Object& scheme); // Create a new table with the given name and validated column schema in the database
-            Json::Object insert(const std::string& tableName, const Json::Object& record); // Validate and insert a new record into the specified table, returning the stored record
-            Json::Array select(const std::string& tableName, const Json::Object& where = {}) const; // Query and return records from the specified table matching the given key-value filter criteria
-            Json::Array select(const std::string& tableName, const std::function<bool(const Json::Object&)>& where) const; // Query and return records from the specified table matching the given predicate callback
-            Json::Array update(const std::string& tableName, const Json::Object& updates, const Json::Object& where = {}); // Update records matching the key-value filter criteria and return the updated records
-            Json::Array update(const std::string& tableName, const Json::Object& updates, const std::function<bool(const Json::Object&)>& where); // Update records matching the predicate callback and return the updated records
-            Json::Array remove(const std::string& tableName, const Json::Object& where = {}); // Delete records matching the key-value filter criteria and return the removed records
-            Json::Array remove(const std::string& tableName, const std::function<bool(const Json::Object&)>& where); // Delete records matching the predicate callback and return the removed records
-            void save() const; // Persist in-memory database content to disk
+            Database(Database&& other) noexcept;
+            Database& operator=(Database&& other) noexcept;
+
+            const std::string& getPath() const;
+            bool isMemory() const;
+            size_t collectionCount() const;
+            bool hasTable(const std::string& tableName) const;
+            TableProxy table(std::string tableName);
+
+            // Native SQLite SQL execution primitives (Phase 2)
+            void execute(const std::string& sql);
+            Json::Array query(const std::string& sql, const std::vector<Json>& params = {}) const;
+            int executeUpdate(const std::string& sql, const std::vector<Json>& params = {});
+            long long lastInsertId() const;
+            void transaction(const std::function<void()>& work);
+            sqlite3* getHandle() const;
+            void close();
+
+            // Table CRUD & Schema operations
+            bool createTable(const std::string& tableName, const Json::Object& scheme);
+            Json::Object insert(const std::string& tableName, const Json::Object& record);
+            Json::Array select(const std::string& tableName, const Json::Object& where = {}) const;
+            Json::Array select(const std::string& tableName, const std::function<bool(const Json::Object&)>& where) const;
+            size_t count(const std::string& tableName, const Json::Object& where = {}) const;
+            Json::Array update(const std::string& tableName, const Json::Object& updates, const Json::Object& where = {});
+            Json::Array update(const std::string& tableName, const Json::Object& updates, const std::function<bool(const Json::Object&)>& where);
+            Json::Array remove(const std::string& tableName, const Json::Object& where = {});
+            Json::Array remove(const std::string& tableName, const std::function<bool(const Json::Object&)>& where);
+            void save() const;
 
         private:
-            std::string _path; // Filesystem path to the JSON database storage file
-            Json::Object _data; // In-memory JSON object storing database collections and documents
-            bool _createIfNotExists; // Flag indicating whether to automatically create a new empty database file if none exists
+            std::string _path;
+            bool _createIfNotExists;
+            bool _isMemory = false;
+            sqlite3* _db = nullptr;
 
-            static void _validateScheme(const Json::Object& scheme); // Validate that the table schema contains valid column definitions with required type fields
-            static bool _matchesType(const Json& value, const std::string& typeName); // Check whether a Json value matches the expected schema type name
-            void _load(); // Read, parse, and validate JSON data from the storage file on disk
-            void _save() const; // Serialize and persist in-memory database data to storage file on disk
+            void _initPragmas();
+            static void _validateScheme(const Json::Object& scheme);
+            static bool _matchesType(const Json& value, const std::string& typeName);
+            Json::Object _getTableScheme(const std::string& tableName) const;
+            static std::string _mapTypeToSql(const std::string& typeName);
+            static Json::Object _formatRowWithScheme(Json::Object row, const Json::Object& scheme);
     };
 } // HTTPServer
 

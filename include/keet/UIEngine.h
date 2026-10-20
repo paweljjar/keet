@@ -237,6 +237,10 @@ namespace UIEngine {
 
             operator const T&() const { return get(); } // Implicitly convert the state handle to a const reference of its underlying value
             const State& operator=(T newValue) const { set(std::move(newValue)); return *this; } // Assign a new value to the state slot
+            template <typename U>
+            const State& operator+=(const U& delta) const { set(get() + delta); return *this; }
+            template <typename U>
+            const State& operator-=(const U& delta) const { set(get() - delta); return *this; }
 
             friend std::ostream& operator<<(std::ostream& os, const State& s) { // Stream insertion operator reading current reactive state value
                 return os << s.get();
