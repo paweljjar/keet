@@ -18,6 +18,8 @@ namespace Keety {
         if (typeName == "void") return "void";
         if (typeName.empty()) return "void";
         if (typeName.rfind("vector<", 0) == 0) return "std::" + typeName;
+        if (typeName == "io::Buffer" || typeName == "io.Buffer" || typeName == "Buffer") return "keet::io::BufferView";
+        if (typeName == "file::File" || typeName == "file.File" || typeName == "File") return "keet::file::File";
         return typeName;
     }
 
@@ -646,6 +648,7 @@ namespace Keety {
 
         // libkeet minimal base runtime headers
         os << "#include <keet/runtime/IO.h>\n";
+        os << "#include <keet/runtime/File.h>\n";
         os << "#include <keet/runtime/Math.h>\n";
         os << "#include <keet/runtime/Memory.h>\n";
         os << "#include <keet/runtime/Collections.h>\n";
@@ -658,13 +661,17 @@ namespace Keety {
             os << "    using keet::String;\n";
             os << "    using keet::StringView;\n";
             os << "    using keet::Vector;\n";
-            os << "    using keet::HashMap;\n\n";
+            os << "    using keet::HashMap;\n";
+            os << "    using Buffer = keet::io::BufferView;\n";
+            os << "    using File = keet::file::File;\n\n";
         } else {
             os << "using namespace keet::lang;\n";
             os << "using keet::String;\n";
             os << "using keet::StringView;\n";
             os << "using keet::Vector;\n";
-            os << "using keet::HashMap;\n\n";
+            os << "using keet::HashMap;\n";
+            os << "using Buffer = keet::io::BufferView;\n";
+            os << "using File = keet::file::File;\n\n";
         }
 
         // Struct definitions

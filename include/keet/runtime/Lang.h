@@ -7,37 +7,110 @@
 #define KEET_RUNTIME_LANG_H
 
 #include <keet/runtime/IO.h>
+#include <keet/runtime/File.h>
 #include <keet/runtime/Math.h>
 #include <keet/runtime/Memory.h>
 #include <keet/runtime/Collections.h>
 
+#ifdef stdin
+#undef stdin
+#endif
+#ifdef stdout
+#undef stdout
+#endif
+#ifdef stderr
+#undef stderr
+#endif
+
 namespace keet::lang {
 
     // =========================================================================
-    // File Module (file.*)
+    // 1. File Module (file.*) - Filesystem & Path Utilities
     // =========================================================================
 
     struct FileModule {
-        using Mode = keet::io::FileMode;
-        static bool remove(const std::string& path) { return keet::io::File::remove(path); }
-        static bool exists(const std::string& path) { return keet::io::File::exists(path); }
-        static size_t getFileSize(const std::string& path) { return keet::io::File::getFileSize(path); }
-        static std::string readText(const std::string& path) { return keet::io::File::readText(path); }
-        static std::vector<uint8_t> readBytes(const std::string& path) { return keet::io::File::readBytes(path); }
-        static bool writeText(const std::string& path, const std::string& text) { return keet::io::File::writeText(path, text); }
-        static bool writeBytes(const std::string& path, const std::vector<uint8_t>& bytes) { return keet::io::File::writeBytes(path, bytes); }
-        static bool appendText(const std::string& path, const std::string& text) { return keet::io::File::appendText(path, text); }
-        static keet::io::File open(const std::string& path, keet::io::FileMode mode = keet::io::FileMode::ReadOnly) {
-            return keet::io::File(path, mode);
+        using Mode = keet::file::FileMode;
+        using File = keet::file::File;
+
+        static bool exists(const std::string& path) { return keet::file::File::exists(path); }
+        static std::string readText(const std::string& path) { return keet::file::File::readText(path); }
+        static bool writeText(const std::string& path, const std::string& text) { return keet::file::File::writeText(path, text); }
+        static bool appendText(const std::string& path, const std::string& text) { return keet::file::File::appendText(path, text); }
+        static bool remove(const std::string& path) { return keet::file::File::remove(path); }
+        static size_t size(const std::string& path) { return keet::file::File::getFileSize(path); }
+        static size_t getFileSize(const std::string& path) { return keet::file::File::getFileSize(path); }
+
+        static std::vector<uint8_t> readBytes(const std::string& path) { return keet::file::File::readBytes(path); }
+        static bool writeBytes(const std::string& path, const std::vector<uint8_t>& bytes) { return keet::file::File::writeBytes(path, bytes); }
+
+        static keet::file::File open(const std::string& path, keet::file::FileMode mode = keet::file::FileMode::ReadOnly) {
+            return keet::file::File(path, mode);
         }
     };
 
     // =========================================================================
-    // I/O Module (io.* & io.file.*)
+    // 2. I/O Module (io.*) - Streams, Console & Buffers
     // =========================================================================
 
+    struct StdinStream {
+        static std::string readLine() {
+            std::string line;
+            if (std::getline(std::cin, line)) {
+                return line;
+            }
+            return {};
+        }
+    };
+
+    struct StdoutStream {
+        template <typename... Args>
+        static void write(Args&&... args) {
+            keet::io::printRaw(std::forward<Args>(args)...);
+        }
+        template <typename... Args>
+        static void writeLine(Args&&... args) {
+            keet::io::println(std::forward<Args>(args)...);
+        }
+    };
+
+    struct StderrStream {
+        template <typename... Args>
+        static void write(Args&&... args) {
+            std::ostream& os = keet::io::getErrorStream();
+            bool first = true;
+            auto printOne = [&](const auto& val) {
+                if (!first) os << " ";
+                os << val;
+                first = false;
+            };
+            (printOne(std::forward<Args>(args)), ...);
+        }
+        template <typename... Args>
+        static void writeLine(Args&&... args) {
+            keet::io::eprintln(std::forward<Args>(args)...);
+        }
+    };
+
     struct IOModule {
-        static constexpr FileModule file{};
+        using BufferType = keet::io::BufferView;
+        using BufferView = keet::io::BufferView;
+
+        template <typename... Args>
+        static keet::io::BufferView Buffer(Args&&... args) {
+            return keet::io::BufferView(std::forward<Args>(args)...);
+        }
+        template <typename... Args>
+        static keet::io::BufferView buffer(Args&&... args) {
+            return keet::io::BufferView(std::forward<Args>(args)...);
+        }
+
+        static constexpr StdinStream stdin{};
+        static constexpr StdoutStream stdout{};
+        static constexpr StderrStream stderr{};
+
+        static constexpr StdinStream in{};
+        static constexpr StdoutStream out{};
+        static constexpr StderrStream err{};
 
         template <typename... Args>
         static void print(Args&&... args) { keet::io::print(std::forward<Args>(args)...); }
@@ -126,6 +199,16 @@ namespace keet::lang {
     inline constexpr IOModule io{};
     inline constexpr MathModule math{};
     inline constexpr MemModule mem{};
+
+    // Type aliases within keet::lang
+    using Buffer = keet::io::BufferView;
+    using File = keet::file::File;
+
+    // Root built-in aliases
+    template <typename... Args>
+    inline void print(Args&&... args) { keet::io::print(std::forward<Args>(args)...); }
+    template <typename... Args>
+    inline void println(Args&&... args) { keet::io::println(std::forward<Args>(args)...); }
 
 } // namespace keet::lang
 

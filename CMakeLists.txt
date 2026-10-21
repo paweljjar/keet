@@ -33,6 +33,7 @@ endif()
 # Define the minimal base runtime library target (Feature 8)
 add_library(keet_runtime STATIC
         src/runtime/IO.cpp
+        src/runtime/File.cpp
         src/runtime/Math.cpp
         src/runtime/Memory.cpp
         src/runtime/Collections.cpp
@@ -130,8 +131,11 @@ keet_add_test(keet_test_standalone_keetscript tests/test_standalone_keetscript.c
 keet_add_executable(keet_test_standalone_app tests/StandaloneApp.keet)
 add_test(NAME keet_test_standalone_app COMMAND keet_test_standalone_app)
 
-# libkeet Minimal Base Runtime - I/O and File Primitives unit test
+# libkeet Minimal Base Runtime - I/O Streams and Formatting unit test
 keet_add_test(keet_test_runtime_io tests/test_runtime_io.cpp)
+
+# libkeet Minimal Base Runtime - File Primitives & Filesystem unit test
+keet_add_test(keet_test_runtime_file tests/test_runtime_file.cpp)
 
 # libkeet Minimal Base Runtime - Math and Numeric Primitives unit test
 keet_add_test(keet_test_runtime_math tests/test_runtime_math.cpp)

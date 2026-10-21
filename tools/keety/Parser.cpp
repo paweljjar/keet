@@ -784,9 +784,14 @@ namespace Keety {
 
     std::string Parser::_parseTypeName() {
         std::string typeName = _consume(TokenKind::Identifier, "Expected type name").text;
-        while (_check(TokenKind::Colon) && _peek().text == "::") {
-            typeName += _advance().text;
-            typeName += _consume(TokenKind::Identifier, "Expected identifier after '::'").text;
+        while ((_check(TokenKind::Colon) && _peek().text == "::") || _check(TokenKind::Dot)) {
+            if (_check(TokenKind::Dot)) {
+                _advance();
+                typeName += "::" + _consume(TokenKind::Identifier, "Expected identifier after '.'").text;
+            } else {
+                typeName += _advance().text;
+                typeName += _consume(TokenKind::Identifier, "Expected identifier after '::'").text;
+            }
         }
         if (_match(TokenKind::LessThan)) {
             typeName += "<";
@@ -804,6 +809,8 @@ namespace Keety {
                 typeName += _advance().text;
             }
         }
+        if (typeName == "io::Buffer" || typeName == "io.Buffer") return "Buffer";
+        if (typeName == "file::File" || typeName == "file.File") return "File";
         return typeName;
     }
 
@@ -1013,6 +1020,7 @@ namespace Keety {
         int braceDepth = 1;
         std::ostringstream oss;
         bool lastWasNoSpaceAfter = true;
+        bool lastWasDot = false;
 
         auto appendToken = [&](const std::string& text, bool spaceBefore = true, bool spaceAfter = true) {
             if (spaceBefore && !lastWasNoSpaceAfter && oss.tellp() > 0) {
@@ -1023,6 +1031,9 @@ namespace Keety {
         };
 
         while (!_isAtEnd() && braceDepth > 0) {
+            bool isDotBefore = lastWasDot;
+            lastWasDot = false;
+
             if (_check(TokenKind::LeftBrace)) {
                 braceDepth++;
                 appendToken("{", true, true);
@@ -1072,8 +1083,8 @@ namespace Keety {
                 continue;
             }
 
-            // Stream print: print(...) -> keet::io::print(...)
-            if (_check(TokenKind::KwPrint) || (_check(TokenKind::Identifier) && _peek().text == "print")) {
+            // Stream print: print(...) -> keet::io::print(...) (only root print, not obj.print)
+            if ((_check(TokenKind::KwPrint) || (_check(TokenKind::Identifier) && _peek().text == "print")) && !isDotBefore) {
                 _advance();
                 appendToken("keet::io::print", true, false);
                 continue;
@@ -1113,6 +1124,7 @@ namespace Keety {
             if (_check(TokenKind::Dot)) {
                 appendToken(".", false, false);
                 _advance();
+                lastWasDot = true;
                 continue;
             }
             if (_check(TokenKind::Colon) && _peek().text == "::") {
