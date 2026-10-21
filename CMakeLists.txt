@@ -105,3 +105,11 @@ keet_add_test(keet_test_snapshots_and_session tests/test_snapshots_and_session.c
 
 # Embedded SQLite Database Engine & KeetScript Component unit test executable
 keet_add_test(keet_test_database tests/test_database.cpp tests/DatabaseTest.keet)
+
+# Standalone KeetScript Library & Module test executable
+keet_add_library(standalone_keet_lib tests/StandaloneModule.keet)
+keet_add_test(keet_test_standalone_keetscript tests/test_standalone_keetscript.cpp LIBRARIES standalone_keet_lib)
+
+# Standalone KeetScript Native Executable test
+keet_add_executable(keet_test_standalone_app tests/StandaloneApp.keet)
+add_test(NAME keet_test_standalone_app COMMAND keet_test_standalone_app)
