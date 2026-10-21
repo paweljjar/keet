@@ -482,8 +482,9 @@ fn main(): void {
 
     // Header assertions
     assert(standGen.headerCode.find("#pragma once") != std::string::npos);
-    assert(standGen.headerCode.find("namespace keet::io") != std::string::npos);
-    assert(standGen.headerCode.find("inline void print") != std::string::npos);
+    assert(standGen.headerCode.find("#include <keet/runtime/IO.h>") != std::string::npos);
+    assert(standGen.headerCode.find("#include <keet/runtime/Math.h>") != std::string::npos);
+    assert(standGen.headerCode.find("#include <keet/runtime/Collections.h>") != std::string::npos);
     assert(standGen.headerCode.find("namespace MathUtils {") != std::string::npos);
     assert(standGen.headerCode.find("class Foo {") != std::string::npos);
     assert(standGen.headerCode.find("public:") != std::string::npos);

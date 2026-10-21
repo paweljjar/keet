@@ -644,23 +644,11 @@ namespace Keety {
         }
         os << "\n";
 
-        // Inline keet::io::print stream formatting helper
-        os << "#ifndef KEET_IO_PRINT_DEFINED\n";
-        os << "#define KEET_IO_PRINT_DEFINED\n";
-        os << "namespace keet::io {\n";
-        os << "    template <typename... Args>\n";
-        os << "    inline void print(Args&&... args) {\n";
-        os << "        bool first = true;\n";
-        os << "        auto printOne = [&](const auto& val) {\n";
-        os << "            if (!first) std::cout << \" \";\n";
-        os << "            std::cout << val;\n";
-        os << "            first = false;\n";
-        os << "        };\n";
-        os << "        (printOne(std::forward<Args>(args)), ...);\n";
-        os << "        std::cout << \"\\n\";\n";
-        os << "    }\n";
-        os << "} // namespace keet::io\n";
-        os << "#endif\n\n";
+        // libkeet minimal base runtime headers
+        os << "#include <keet/runtime/IO.h>\n";
+        os << "#include <keet/runtime/Math.h>\n";
+        os << "#include <keet/runtime/Memory.h>\n";
+        os << "#include <keet/runtime/Collections.h>\n\n";
 
         bool hasNamespace = !mod.moduleName.empty();
         if (hasNamespace) {
