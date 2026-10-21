@@ -86,6 +86,18 @@ namespace Keety {
         KwPut, // put
         KwDelete, // delete
 
+        // Standalone KeetScript language keywords
+        KwFn, // fn
+        KwExport, // export
+        KwClass, // class
+        KwStruct, // struct
+        KwPublic, // public
+        KwPrivate, // private
+        KwProtected, // protected
+        KwModule, // module
+        KwThis, // this
+        KwPrint, // print
+
         // Literals and identifiers
         Identifier, // Alphanumeric identifier (e.g., count, onClick, title)
         StringLiteral, // Quoted string literal ("..." or '...')
@@ -121,7 +133,12 @@ namespace Keety {
                    kind == TokenKind::KwBackend ||
                    kind == TokenKind::KwFrontend || kind == TokenKind::KwGet ||
                    kind == TokenKind::KwPost || kind == TokenKind::KwPut ||
-                   kind == TokenKind::KwDelete;
+                   kind == TokenKind::KwDelete || kind == TokenKind::KwFn ||
+                   kind == TokenKind::KwExport || kind == TokenKind::KwClass ||
+                   kind == TokenKind::KwStruct || kind == TokenKind::KwPublic ||
+                   kind == TokenKind::KwPrivate || kind == TokenKind::KwProtected ||
+                   kind == TokenKind::KwModule || kind == TokenKind::KwThis ||
+                   kind == TokenKind::KwPrint;
         }
 
         [[nodiscard]] static std::string_view kindToString(TokenKind k) { // Human-readable description for debugging and parser error messages
@@ -181,6 +198,16 @@ namespace Keety {
                 case TokenKind::KwPost: return "post";
                 case TokenKind::KwPut: return "put";
                 case TokenKind::KwDelete: return "delete";
+                case TokenKind::KwFn: return "fn";
+                case TokenKind::KwExport: return "export";
+                case TokenKind::KwClass: return "class";
+                case TokenKind::KwStruct: return "struct";
+                case TokenKind::KwPublic: return "public";
+                case TokenKind::KwPrivate: return "private";
+                case TokenKind::KwProtected: return "protected";
+                case TokenKind::KwModule: return "module";
+                case TokenKind::KwThis: return "this";
+                case TokenKind::KwPrint: return "print";
                 case TokenKind::Identifier: return "identifier";
                 case TokenKind::StringLiteral: return "string literal";
                 case TokenKind::NumberLiteral: return "number literal";

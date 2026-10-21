@@ -10,6 +10,7 @@
 #include "ASTPrinter.h"
 #include "Lexer.h"
 #include "Parser.h"
+#include "Codegen.h"
 
 int main() {
     using namespace Keety;
@@ -254,6 +255,265 @@ int main() {
     assert(parsedFile->server->frontend->pageTitle == "Todos App");
 
     std::cout << "Parser verification of <server> block passed! 🐱" << std::endl;
-    std::cout << "All Phase 1 AST assertions passed successfully! 🐱" << std::endl;
+
+    // Test Standalone KeetScript pure module lexing (without XML tags)
+    std::string pureModuleSource = R"(
+fn add(a: int, b: int): int {
+    return a + b;
+}
+
+export class Foo {
+    public let c: int;
+    private let d: int = 4;
+
+    Foo(a: int, b: int) {
+        this.c = a + b;
+        print(subtract());
+    }
+
+    private fn subtract(): int {
+        return this.c - this.d;
+    }
+}
+
+fn main(): void {
+    let c: int = add(4, 5);
+    print("Hello, World! 4 + 5 =", c);
+}
+)";
+
+    Lexer moduleLexer(pureModuleSource, "PureModule.keet");
+    auto modTokens = moduleLexer.tokenize();
+    assert(!modTokens.empty());
+    bool foundFn = false, foundExport = false, foundClass = false;
+    bool foundPublic = false, foundPrivate = false, foundThis = false, foundPrint = false;
+    for (const auto& tok : modTokens) {
+        if (tok.is(TokenKind::KwFn)) foundFn = true;
+        if (tok.is(TokenKind::KwExport)) foundExport = true;
+        if (tok.is(TokenKind::KwClass)) foundClass = true;
+        if (tok.is(TokenKind::KwPublic)) foundPublic = true;
+        if (tok.is(TokenKind::KwPrivate)) foundPrivate = true;
+        if (tok.is(TokenKind::KwThis)) foundThis = true;
+        if (tok.is(TokenKind::KwPrint)) foundPrint = true;
+    }
+    assert(foundFn && foundExport && foundClass && foundPublic && foundPrivate && foundThis && foundPrint);
+    std::cout << "Standalone KeetScript pure module tokenization passed! 🐱" << std::endl;
+
+    // Test Standalone KeetScript PureModule AST and ASTPrinter
+    auto pureFile = std::make_unique<SourceFile>("MathModule");
+    pureFile->isPureModule = true;
+    auto mod = std::make_unique<PureModule>();
+    mod->moduleName = "Math";
+
+    auto addFn = std::make_shared<StandaloneFunctionDecl>();
+    addFn->name = "add";
+    addFn->returnType = "int";
+    addFn->isExported = true;
+    addFn->parameters.push_back(ParameterDecl{.name = "a", .typeName = "int"});
+    addFn->parameters.push_back(ParameterDecl{.name = "b", .typeName = "int"});
+    addFn->body = "return a + b;";
+    mod->functions.push_back(addFn);
+
+    auto fooClass = std::make_shared<ClassDecl>();
+    fooClass->name = "Foo";
+    fooClass->isExported = true;
+
+    auto fieldC = std::make_shared<ClassFieldDecl>();
+    fieldC->name = "c";
+    fieldC->typeName = "int";
+    fieldC->visibility = Visibility::Public;
+    fooClass->fields.push_back(fieldC);
+
+    auto fieldD = std::make_shared<ClassFieldDecl>();
+    fieldD->name = "d";
+    fieldD->typeName = "int";
+    fieldD->visibility = Visibility::Private;
+    fieldD->defaultValueExpr = "4";
+    fooClass->fields.push_back(fieldD);
+
+    auto ctorFoo = std::make_shared<ConstructorDecl>();
+    ctorFoo->name = "Foo";
+    ctorFoo->parameters.push_back(ParameterDecl{.name = "a", .typeName = "int"});
+    ctorFoo->parameters.push_back(ParameterDecl{.name = "b", .typeName = "int"});
+    ctorFoo->body = "this->c = a + b;\nprint(subtract());";
+    fooClass->constructors.push_back(ctorFoo);
+
+    auto methodSub = std::make_shared<ClassMethodDecl>();
+    methodSub->name = "subtract";
+    methodSub->returnType = "int";
+    methodSub->visibility = Visibility::Private;
+    methodSub->body = "return this->c - this->d;";
+    fooClass->methods.push_back(methodSub);
+
+    mod->classes.push_back(fooClass);
+
+    auto mainFn = std::make_shared<StandaloneFunctionDecl>();
+    mainFn->name = "main";
+    mainFn->returnType = "void";
+    mainFn->isMain = true;
+    mainFn->body = "let c: int = add(4, 5);\nprint(\"Hello, World! 4 + 5 =\", c);";
+    mod->functions.push_back(mainFn);
+
+    pureFile->moduleBlock = std::move(mod);
+
+    std::string pureDump = printer.print(*pureFile);
+    assert(pureDump.find("PureModule: Math") != std::string::npos);
+    assert(pureDump.find("Fn: add(a: int, b: int): int") != std::string::npos);
+    assert(pureDump.find("Class: Foo (2 fields, 1 ctors, 1 methods)") != std::string::npos);
+    assert(pureDump.find("ClassField: public c: int") != std::string::npos);
+    assert(pureDump.find("ClassField: private d: int = 4") != std::string::npos);
+    assert(pureDump.find("Constructor: Foo(a: int, b: int)") != std::string::npos);
+    assert(pureDump.find("ClassMethod: private fn subtract(): int") != std::string::npos);
+    assert(pureDump.find("Fn: main(): void [main]") != std::string::npos);
+
+    std::cout << "Standalone KeetScript PureModule AST & ASTPrinter passed! 🐱" << std::endl;
+
+    // Test Parser on pure KeetScript standalone module
+    std::string standaloneCode = R"(
+module MathUtils;
+
+import cpp from "iostream" as io;
+
+fn add(a: int, b: int): int {
+    return a + b;
+}
+
+export class Foo {
+    public let c: int;
+    private let d: int = 4;
+
+    Foo(a: int, b: int) {
+        this.c = a + b;
+        print(subtract());
+    }
+
+    private fn subtract(): int {
+        return this.c - this.d;
+    }
+}
+
+export struct Point {
+    public let x: int;
+    public let y: int = 0;
+}
+
+fn main(): void {
+    let c: int = add(4, 5);
+    print("Hello, World! 4 + 5 =", c);
+}
+)";
+
+    Lexer standLexer(standaloneCode, "MathUtils.keet");
+    auto standTokens = standLexer.tokenize();
+    Parser standParser(standTokens, "MathUtils");
+    auto parsedStand = standParser.parse();
+
+    assert(parsedStand->isPureModule);
+    assert(parsedStand->moduleBlock != nullptr);
+    assert(parsedStand->moduleBlock->moduleName == "MathUtils");
+
+    // Verify imports
+    assert(parsedStand->moduleBlock->imports.size() == 1);
+    assert(parsedStand->moduleBlock->imports[0]->headerPath == "iostream");
+    assert(parsedStand->moduleBlock->imports[0]->asAlias == "io");
+
+    // Verify standalone functions
+    assert(parsedStand->moduleBlock->functions.size() == 2);
+    auto pAdd = parsedStand->moduleBlock->functions[0];
+    assert(pAdd->name == "add");
+    assert(pAdd->returnType == "int");
+    assert(!pAdd->isMain);
+    assert(pAdd->parameters.size() == 2);
+    assert(pAdd->parameters[0].name == "a" && pAdd->parameters[0].typeName == "int");
+    assert(pAdd->parameters[1].name == "b" && pAdd->parameters[1].typeName == "int");
+    assert(pAdd->body.find("return a + b;") != std::string::npos);
+
+    auto pMain = parsedStand->moduleBlock->functions[1];
+    assert(pMain->name == "main");
+    assert(pMain->returnType == "void");
+    assert(pMain->isMain);
+    assert(pMain->body.find("int c = add(4, 5);") != std::string::npos);
+    assert(pMain->body.find("keet::io::print(\"Hello, World! 4 + 5 =\", c);") != std::string::npos);
+
+    // Verify classes
+    assert(parsedStand->moduleBlock->classes.size() == 1);
+    auto pFoo = parsedStand->moduleBlock->classes[0];
+    assert(pFoo->name == "Foo");
+    assert(pFoo->isExported);
+    assert(pFoo->fields.size() == 2);
+    assert(pFoo->fields[0]->name == "c" && pFoo->fields[0]->visibility == Visibility::Public);
+    assert(pFoo->fields[1]->name == "d" && pFoo->fields[1]->visibility == Visibility::Private && pFoo->fields[1]->defaultValueExpr == "4");
+
+    assert(pFoo->constructors.size() == 1);
+    auto pCtor = pFoo->constructors[0];
+    assert(pCtor->name == "Foo");
+    assert(pCtor->parameters.size() == 2);
+    assert(pCtor->body.find("this->c = a + b;") != std::string::npos);
+    assert(pCtor->body.find("keet::io::print(subtract());") != std::string::npos);
+
+    assert(pFoo->methods.size() == 1);
+    auto pMethod = pFoo->methods[0];
+    assert(pMethod->name == "subtract");
+    assert(pMethod->returnType == "int");
+    assert(pMethod->visibility == Visibility::Private);
+    assert(pMethod->body.find("return this->c - this->d;") != std::string::npos);
+
+    // Verify structs
+    assert(parsedStand->moduleBlock->structs.size() == 1);
+    auto pPoint = parsedStand->moduleBlock->structs[0];
+    assert(pPoint->name == "Point");
+    assert(pPoint->isExported);
+    assert(pPoint->fields.size() == 2);
+    assert(pPoint->fields[0]->name == "x");
+    assert(pPoint->fields[1]->name == "y" && pPoint->fields[1]->defaultValueExpr == "0");
+
+    std::string parsedStandDump = printer.print(*parsedStand);
+    assert(parsedStandDump.find("PureModule: MathUtils") != std::string::npos);
+    assert(parsedStandDump.find("Class: Foo") != std::string::npos);
+    assert(parsedStandDump.find("Struct: Point") != std::string::npos);
+    std::cout << "Standalone KeetScript Parser verification passed! 🐱" << std::endl;
+
+    // Test Codegen on standalone pure KeetScript module (Phase 3)
+    Codegen standCodegen(*parsedStand, "MathUtils.h");
+    GeneratedCode standGen = standCodegen.generate();
+
+    std::cout << "--- Generated Header ---\n" << standGen.headerCode << std::endl;
+    std::cout << "--- Generated Source ---\n" << standGen.sourceCode << std::endl;
+
+    // Header assertions
+    assert(standGen.headerCode.find("#pragma once") != std::string::npos);
+    assert(standGen.headerCode.find("namespace keet::io") != std::string::npos);
+    assert(standGen.headerCode.find("inline void print") != std::string::npos);
+    assert(standGen.headerCode.find("namespace MathUtils {") != std::string::npos);
+    assert(standGen.headerCode.find("class Foo {") != std::string::npos);
+    assert(standGen.headerCode.find("public:") != std::string::npos);
+    assert(standGen.headerCode.find("int c = {};") != std::string::npos);
+    assert(standGen.headerCode.find("Foo(int a, int b);") != std::string::npos);
+    assert(standGen.headerCode.find("private:") != std::string::npos);
+    assert(standGen.headerCode.find("int d = 4;") != std::string::npos);
+    assert(standGen.headerCode.find("int subtract();") != std::string::npos);
+    assert(standGen.headerCode.find("struct Point {") != std::string::npos);
+    assert(standGen.headerCode.find("int x = {};") != std::string::npos);
+    assert(standGen.headerCode.find("int y = 0;") != std::string::npos);
+    assert(standGen.headerCode.find("int add(int a, int b);") != std::string::npos);
+    assert(standGen.headerCode.find("using namespace MathUtils;") != std::string::npos);
+
+    // Source assertions
+    assert(standGen.sourceCode.find("#include \"MathUtils.h\"") != std::string::npos);
+    assert(standGen.sourceCode.find("Foo::Foo(int a, int b) {") != std::string::npos);
+    assert(standGen.sourceCode.find("this->c = a + b;") != std::string::npos);
+    assert(standGen.sourceCode.find("keet::io::print(subtract());") != std::string::npos);
+    assert(standGen.sourceCode.find("int Foo::subtract() {") != std::string::npos);
+    assert(standGen.sourceCode.find("return this->c - this->d;") != std::string::npos);
+    assert(standGen.sourceCode.find("int add(int a, int b) {") != std::string::npos);
+    assert(standGen.sourceCode.find("return a + b;") != std::string::npos);
+    assert(standGen.sourceCode.find("int main(int argc, char** argv) {") != std::string::npos);
+    assert(standGen.sourceCode.find("int c = add(4, 5);") != std::string::npos);
+    assert(standGen.sourceCode.find("keet::io::print(\"Hello, World! 4 + 5 =\", c);") != std::string::npos);
+    assert(standGen.sourceCode.find("return 0;") != std::string::npos);
+
+    std::cout << "Standalone KeetScript C++20 Codegen verification passed! 🐱" << std::endl;
+
+    std::cout << "All Phase 1, Phase 2, & Phase 3 AST, Parser & Codegen assertions passed successfully! 🐱" << std::endl;
     return 0;
 }

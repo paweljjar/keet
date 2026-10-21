@@ -37,6 +37,7 @@ namespace Keety {
             // Mode flags for context-sensitive SFC lexing
             enum class LexerMode {
                 Root, // Expecting <server>, <script>, <template>, or <style> tags
+                Module, // Inside a pure KeetScript module (non-SFC)
                 Server, // Inside <server> ... </server>
                 Script, // Inside <script> ... </script>
                 Template, // Inside <template> ... </template>
@@ -92,6 +93,7 @@ namespace Keety {
             size_t _line = 1;
             size_t _column = 1;
             LexerMode _mode = LexerMode::Root;
+            bool _seenSfcTag = false;
     };
 
 } // namespace Keety

@@ -29,6 +29,7 @@ namespace Keety {
                 _emitIndent();
                 _out << "SourceFile: " << node.componentName << "\n";
                 _indent += _indentStep;
+                if (node.isPureModule && node.moduleBlock) node.moduleBlock->accept(*this);
                 if (node.server) node.server->accept(*this);
                 if (node.script) node.script->accept(*this);
                 if (node.templateBlock) node.templateBlock->accept(*this);
@@ -247,6 +248,86 @@ namespace Keety {
                 _indent -= _indentStep;
                 _emitIndent();
                 _out << "}\n";
+            }
+
+            void visit(const ClassFieldDecl& node) override {
+                _emitIndent();
+                std::string vis = node.visibility == Visibility::Public ? "public" :
+                                  (node.visibility == Visibility::Private ? "private" : "protected");
+                _out << "ClassField: " << vis << " " << node.name << ": " << node.typeName;
+                if (!node.defaultValueExpr.empty()) {
+                    _out << " = " << node.defaultValueExpr;
+                }
+                _out << "\n";
+            }
+
+            void visit(const ConstructorDecl& node) override {
+                _emitIndent();
+                _out << "Constructor: " << node.name << "(";
+                for (size_t i = 0; i < node.parameters.size(); ++i) {
+                    if (i > 0) _out << ", ";
+                    _out << node.parameters[i].name << ": " << node.parameters[i].typeName;
+                }
+                _out << ")\n";
+            }
+
+            void visit(const ClassMethodDecl& node) override {
+                _emitIndent();
+                std::string vis = node.visibility == Visibility::Public ? "public" :
+                                  (node.visibility == Visibility::Private ? "private" : "protected");
+                _out << "ClassMethod: " << vis << " fn " << node.name << "(";
+                for (size_t i = 0; i < node.parameters.size(); ++i) {
+                    if (i > 0) _out << ", ";
+                    _out << node.parameters[i].name << ": " << node.parameters[i].typeName;
+                }
+                _out << "): " << node.returnType << "\n";
+            }
+
+            void visit(const ClassDecl& node) override {
+                _emitIndent();
+                if (node.isExported) _out << "export ";
+                _out << "Class: " << node.name << " (" << node.fields.size() << " fields, "
+                     << node.constructors.size() << " ctors, " << node.methods.size() << " methods)\n";
+                _indent += _indentStep;
+                for (const auto& fld : node.fields) fld->accept(*this);
+                for (const auto& ctor : node.constructors) ctor->accept(*this);
+                for (const auto& mtd : node.methods) mtd->accept(*this);
+                _indent -= _indentStep;
+            }
+
+            void visit(const StructDecl& node) override {
+                _emitIndent();
+                if (node.isExported) _out << "export ";
+                _out << "Struct: " << node.name << " (" << node.fields.size() << " fields)\n";
+                _indent += _indentStep;
+                for (const auto& fld : node.fields) fld->accept(*this);
+                _indent -= _indentStep;
+            }
+
+            void visit(const StandaloneFunctionDecl& node) override {
+                _emitIndent();
+                if (node.isExported) _out << "export ";
+                _out << "Fn: " << node.name << "(";
+                for (size_t i = 0; i < node.parameters.size(); ++i) {
+                    if (i > 0) _out << ", ";
+                    _out << node.parameters[i].name << ": " << node.parameters[i].typeName;
+                }
+                _out << "): " << node.returnType;
+                if (node.isMain) _out << " [main]";
+                _out << "\n";
+            }
+
+            void visit(const PureModule& node) override {
+                _emitIndent();
+                _out << "PureModule: " << node.moduleName << " (" << node.imports.size() << " imports, "
+                     << node.classes.size() << " classes, " << node.structs.size() << " structs, "
+                     << node.functions.size() << " functions)\n";
+                _indent += _indentStep;
+                for (const auto& imp : node.imports) imp->accept(*this);
+                for (const auto& cls : node.classes) cls->accept(*this);
+                for (const auto& st : node.structs) st->accept(*this);
+                for (const auto& fn : node.functions) fn->accept(*this);
+                _indent -= _indentStep;
             }
 
         private:

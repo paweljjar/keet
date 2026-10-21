@@ -1,0 +1,33 @@
+module StandaloneModule;
+
+fn add(a: int, b: int): int {
+    return a + b;
+}
+
+fn multiply(a: int, b: int): int {
+    return a * b;
+}
+
+export struct Vector2D {
+    public let x: int;
+    public let y: int = 0;
+}
+
+export class Calculator {
+    public let result: int;
+    private let bias: int = 10;
+
+    Calculator(initialValue: int) {
+        this.result = initialValue + this.bias;
+        print("Calculator initialized with bias:", this.result);
+    }
+
+    public fn compute(factor: int): int {
+        this.result = this.result * factor;
+        return this.result;
+    }
+
+    public fn getBias(): int {
+        return this.bias;
+    }
+}

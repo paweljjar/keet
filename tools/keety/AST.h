@@ -48,6 +48,13 @@ namespace Keety {
     struct ForBlockNode;
     struct StyleBlock;
     struct StyleRule;
+    struct ClassFieldDecl;
+    struct ConstructorDecl;
+    struct ClassMethodDecl;
+    struct ClassDecl;
+    struct StructDecl;
+    struct StandaloneFunctionDecl;
+    struct PureModule;
 
     class ASTVisitor { // Visitor interface enabling clean traversal of the KeetScript AST hierarchy
         public:
@@ -74,6 +81,13 @@ namespace Keety {
             virtual void visit(const ForBlockNode& node) = 0;
             virtual void visit(const StyleBlock& node) = 0;
             virtual void visit(const StyleRule& node) = 0;
+            virtual void visit(const ClassFieldDecl& node) = 0;
+            virtual void visit(const ConstructorDecl& node) = 0;
+            virtual void visit(const ClassMethodDecl& node) = 0;
+            virtual void visit(const ClassDecl& node) = 0;
+            virtual void visit(const StructDecl& node) = 0;
+            virtual void visit(const StandaloneFunctionDecl& node) = 0;
+            virtual void visit(const PureModule& node) = 0;
     };
 
     // =========================================================================
@@ -363,11 +377,96 @@ namespace Keety {
     };
 
     // =========================================================================
-    // Root AST Node: Single-File Component
+    // Standalone KeetScript Pure Module & OOP AST Definitions
     // =========================================================================
 
-    struct SourceFile : public ASTNode { // Top-level root AST node representing a complete .keet Single-File Component
-        std::string componentName; // Derived component class name (e.g., "CounterCard")
+    enum class Visibility { // Access modifier for class fields and methods
+        Public,
+        Private,
+        Protected
+    };
+
+    struct ClassFieldDecl : public ASTNode { // Field definition inside a class or struct (public let c: int;)
+        std::string name; // Variable identifier
+        std::string typeName = "int"; // Type name
+        Visibility visibility = Visibility::Public; // Access visibility
+        std::string defaultValueExpr; // Optional initial value
+
+        explicit ClassFieldDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
+    struct ConstructorDecl : public ASTNode { // Constructor declaration inside class Foo(a: int, b: int) { ... }
+        std::string name; // Class constructor identifier
+        std::vector<ParameterDecl> parameters; // Formal parameters
+        std::string body; // Constructor implementation statements
+
+        explicit ConstructorDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
+    struct ClassMethodDecl : public ASTNode { // Method declaration inside class (fn subtract(): int { ... })
+        std::string name; // Method identifier
+        std::string returnType = "void"; // Declared return type
+        Visibility visibility = Visibility::Public; // Access visibility
+        std::vector<ParameterDecl> parameters; // Formal parameters
+        std::string body; // Method implementation statements
+
+        explicit ClassMethodDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
+    struct ClassDecl : public ASTNode { // Object-oriented class declaration (export class Foo { ... })
+        std::string name; // Class name identifier
+        bool isExported = false; // export class ...
+        std::vector<std::shared_ptr<ClassFieldDecl>> fields; // Class fields
+        std::vector<std::shared_ptr<ConstructorDecl>> constructors; // Constructors
+        std::vector<std::shared_ptr<ClassMethodDecl>> methods; // Class methods
+
+        explicit ClassDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
+    struct StructDecl : public ASTNode { // Value type struct declaration (struct Point { x: int; y: int; })
+        std::string name; // Struct name identifier
+        bool isExported = false; // export struct ...
+        std::vector<std::shared_ptr<ClassFieldDecl>> fields; // Struct fields
+
+        explicit StructDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
+    struct StandaloneFunctionDecl : public ASTNode { // Top-level pure function (fn add(a: int, b: int): int { ... })
+        std::string name; // Function name
+        std::string returnType = "void"; // Return type
+        bool isExported = false; // export fn ...
+        bool isMain = false; // fn main(): void entry point
+        std::vector<ParameterDecl> parameters; // Formal parameters
+        std::string body; // Function implementation statements
+
+        explicit StandaloneFunctionDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
+    struct PureModule : public ASTNode { // Container for a pure KeetScript file (.keet without XML tags)
+        std::string moduleName; // Optional module namespace
+        std::vector<std::shared_ptr<ImportCppDecl>> imports; // C++ header imports
+        std::vector<std::shared_ptr<ClassDecl>> classes; // Class declarations
+        std::vector<std::shared_ptr<StructDecl>> structs; // Struct declarations
+        std::vector<std::shared_ptr<StandaloneFunctionDecl>> functions; // Top-level functions
+
+        explicit PureModule(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
+    // =========================================================================
+    // Root AST Node: Single-File Component or Pure Module
+    // =========================================================================
+
+    struct SourceFile : public ASTNode { // Top-level root AST node representing a complete .keet file
+        std::string componentName; // Derived component or module name (e.g., "CounterCard", "MathUtils")
+        bool isPureModule = false; // True if this file is a standalone pure module without XML tags
+        std::unique_ptr<PureModule> moduleBlock; // Pure module AST when isPureModule == true
         std::unique_ptr<ServerBlock> server; // Optional <server> section AST (Full-Stack App mode)
         std::unique_ptr<ScriptBlock> script; // Optional <script> section AST
         std::unique_ptr<TemplateBlock> templateBlock; // Optional <template> section AST

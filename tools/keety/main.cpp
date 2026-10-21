@@ -21,11 +21,12 @@ namespace {
         std::cout << "keety - KeetScript AOT Compiler for Keet micro-framework 🐱\n"
                   << "Usage: keety <input.keet> [options]\n\n"
                   << "Options:\n"
-                  << "  -i, --input <path>            Path to input .keet component file\n"
+                  << "  -i, --input <path>            Path to input .keet component or module file\n"
                   << "  -o, --output-source <path>    Path to generated .cpp implementation file\n"
                   << "  -h, --output-header <path>    Path to generated .h header file\n"
                   << "  -c, --component-name <name>   Override generated component class name\n"
                   << "      --app                     Generate standalone application entry point with main()\n"
+                  << "      --lib                     Compile pure KeetScript module into C++20 library\n"
                   << "      --lint                    Perform lexical & syntactic check without emitting code\n"
                   << "      --help                    Display this help message and exit\n";
     }
@@ -50,6 +51,7 @@ int main(int argc, char* argv[]) {
     std::string componentName;
     bool lintOnly = false;
     bool appMode = false;
+    bool libMode = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -60,6 +62,8 @@ int main(int argc, char* argv[]) {
             lintOnly = true;
         } else if (arg == "--app") {
             appMode = true;
+        } else if (arg == "--lib") {
+            libMode = true;
         } else if ((arg == "-i" || arg == "--input") && i + 1 < argc) {
             inputFile = argv[++i];
         } else if ((arg == "-o" || arg == "--output-source") && i + 1 < argc) {
@@ -107,8 +111,16 @@ int main(int argc, char* argv[]) {
         Keety::Parser parser(tokens, componentName);
         std::unique_ptr<Keety::SourceFile> ast = parser.parse();
 
+        if (libMode) {
+            ast->isPureModule = true;
+        }
+
         if (lintOnly) {
-            std::cout << "keety: " << inputFile << ": Syntax OK [Component: " << componentName << "]\n";
+            if (ast->isPureModule) {
+                std::cout << "keety: " << inputFile << ": Syntax OK [PureModule: " << componentName << "]\n";
+            } else {
+                std::cout << "keety: " << inputFile << ": Syntax OK [Component: " << componentName << "]\n";
+            }
             return 0;
         }
 

@@ -10,6 +10,20 @@ namespace Keety {
     std::unique_ptr<SourceFile> Parser::parse() {
         auto file = std::make_unique<SourceFile>(_componentName, _peek().loc);
 
+        if (_isAtEnd()) {
+            return file;
+        }
+
+        // If the first non-EOF token is NOT an SFC section tag, this is a pure KeetScript module
+        if (!_check(TokenKind::TagServerOpen) &&
+            !_check(TokenKind::TagScriptOpen) &&
+            !_check(TokenKind::TagTemplateOpen) &&
+            !_check(TokenKind::TagStyleOpen)) {
+            file->isPureModule = true;
+            file->moduleBlock = _parsePureModule();
+            return file;
+        }
+
         while (!_isAtEnd()) {
             if (_check(TokenKind::TagServerOpen)) {
                 if (file->server) {
@@ -565,7 +579,11 @@ namespace Keety {
             return attr;
         }
 
-        attr.name = _consume(TokenKind::Identifier, "Expected attribute name").text;
+        if (_peek().is(TokenKind::Identifier) || _peek().isKeyword()) {
+            attr.name = _advance().text;
+        } else {
+            attr.name = _consume(TokenKind::Identifier, "Expected attribute name").text;
+        }
 
         if (_match(TokenKind::Assign)) {
             if (_check(TokenKind::StringLiteral)) {
@@ -727,6 +745,372 @@ namespace Keety {
 
         _consume(TokenKind::RightBrace, "Expected '}' closing CSS rule declarations");
         return rule;
+    }
+
+    std::unique_ptr<PureModule> Parser::_parsePureModule() {
+        auto mod = std::make_unique<PureModule>(_peek().loc);
+
+        while (!_isAtEnd()) {
+            if (_match(TokenKind::KwModule)) {
+                mod->moduleName = _consume(TokenKind::Identifier, "Expected module identifier").text;
+                _consume(TokenKind::Semicolon, "Expected ';' after module declaration");
+            } else if (_check(TokenKind::KwImport)) {
+                mod->imports.push_back(_parseImportCpp());
+            } else if (_match(TokenKind::KwExport)) {
+                if (_check(TokenKind::KwClass)) {
+                    mod->classes.push_back(_parseClass(true));
+                } else if (_check(TokenKind::KwStruct)) {
+                    mod->structs.push_back(_parseStruct(true));
+                } else if (_check(TokenKind::KwFn) || _check(TokenKind::KwDef)) {
+                    mod->functions.push_back(_parseStandaloneFunction(true));
+                } else {
+                    throw ParserException("Expected 'class', 'struct', or 'fn' after 'export'", _peek().loc);
+                }
+            } else if (_check(TokenKind::KwClass)) {
+                mod->classes.push_back(_parseClass(false));
+            } else if (_check(TokenKind::KwStruct)) {
+                mod->structs.push_back(_parseStruct(false));
+            } else if (_check(TokenKind::KwFn) || _check(TokenKind::KwDef)) {
+                mod->functions.push_back(_parseStandaloneFunction(false));
+            } else if (_match(TokenKind::Semicolon)) {
+                continue;
+            } else {
+                throw ParserException("Unexpected token in pure KeetScript module: '" + _peek().text + "'", _peek().loc);
+            }
+        }
+
+        return mod;
+    }
+
+    std::string Parser::_parseTypeName() {
+        std::string typeName = _consume(TokenKind::Identifier, "Expected type name").text;
+        while (_check(TokenKind::Colon) && _peek().text == "::") {
+            typeName += _advance().text;
+            typeName += _consume(TokenKind::Identifier, "Expected identifier after '::'").text;
+        }
+        if (_match(TokenKind::LessThan)) {
+            typeName += "<";
+            int depth = 1;
+            while (!_isAtEnd() && depth > 0) {
+                if (_check(TokenKind::LessThan)) depth++;
+                else if (_check(TokenKind::GreaterThan)) {
+                    depth--;
+                    if (depth == 0) {
+                        typeName += ">";
+                        _advance();
+                        break;
+                    }
+                }
+                typeName += _advance().text;
+            }
+        }
+        return typeName;
+    }
+
+    std::shared_ptr<ClassDecl> Parser::_parseClass(bool isExported) {
+        SourceLocation loc = _consume(TokenKind::KwClass, "Expected 'class'").loc;
+        std::string className = _consume(TokenKind::Identifier, "Expected class name identifier").text;
+        auto classDecl = std::make_shared<ClassDecl>(loc);
+        classDecl->name = className;
+        classDecl->isExported = isExported;
+
+        _consume(TokenKind::LeftBrace, "Expected '{' to start class body");
+        Visibility defaultVis = Visibility::Public;
+
+        while (!_isAtEnd() && !_check(TokenKind::RightBrace)) {
+            // Check visibility block: public:, private:, protected:
+            if ((_check(TokenKind::KwPublic) || _check(TokenKind::KwPrivate) || _check(TokenKind::KwProtected)) &&
+                _peek(1).is(TokenKind::Colon)) {
+                if (_check(TokenKind::KwPublic)) defaultVis = Visibility::Public;
+                else if (_check(TokenKind::KwPrivate)) defaultVis = Visibility::Private;
+                else defaultVis = Visibility::Protected;
+                _advance(); // Consume visibility keyword
+                _advance(); // Consume ':'
+                continue;
+            }
+
+            // Check member-level visibility prefix
+            Visibility memberVis = defaultVis;
+            if (_match(TokenKind::KwPublic)) {
+                memberVis = Visibility::Public;
+            } else if (_match(TokenKind::KwPrivate)) {
+                memberVis = Visibility::Private;
+            } else if (_match(TokenKind::KwProtected)) {
+                memberVis = Visibility::Protected;
+            }
+
+            // 1) Constructor: ClassName(...)
+            if (_check(TokenKind::Identifier) && _peek().text == className && _peek(1).is(TokenKind::LeftParen)) {
+                SourceLocation ctorLoc = _advance().loc;
+                auto ctor = std::make_shared<ConstructorDecl>(ctorLoc);
+                ctor->name = className;
+                _consume(TokenKind::LeftParen, "Expected '(' after constructor name");
+                while (!_isAtEnd() && !_check(TokenKind::RightParen)) {
+                    ParameterDecl param;
+                    param.name = _consume(TokenKind::Identifier, "Expected constructor parameter name").text;
+                    if (_match(TokenKind::Colon)) {
+                        param.typeName = _parseTypeName();
+                    }
+                    ctor->parameters.push_back(param);
+                    if (!_check(TokenKind::RightParen)) {
+                        _consume(TokenKind::Comma, "Expected ',' between constructor parameters");
+                    }
+                }
+                _consume(TokenKind::RightParen, "Expected ')' closing constructor parameters");
+
+                ctor->body = _parseStatementBody();
+                classDecl->constructors.push_back(ctor);
+                continue;
+            }
+
+            // 2) Method: fn methodName(...) or def methodName(...)
+            if (_check(TokenKind::KwFn) || _check(TokenKind::KwDef)) {
+                SourceLocation methodLoc = _advance().loc;
+                auto method = std::make_shared<ClassMethodDecl>(methodLoc);
+                method->visibility = memberVis;
+                method->name = _consume(TokenKind::Identifier, "Expected method name").text;
+                _consume(TokenKind::LeftParen, "Expected '(' after method name");
+                while (!_isAtEnd() && !_check(TokenKind::RightParen)) {
+                    ParameterDecl param;
+                    param.name = _consume(TokenKind::Identifier, "Expected method parameter name").text;
+                    if (_match(TokenKind::Colon)) {
+                        param.typeName = _parseTypeName();
+                    }
+                    method->parameters.push_back(param);
+                    if (!_check(TokenKind::RightParen)) {
+                        _consume(TokenKind::Comma, "Expected ',' between method parameters");
+                    }
+                }
+                _consume(TokenKind::RightParen, "Expected ')' closing method parameters");
+
+                if (_match(TokenKind::Colon) || _match(TokenKind::Arrow)) {
+                    method->returnType = _parseTypeName();
+                }
+
+                method->body = _parseStatementBody();
+                classDecl->methods.push_back(method);
+                continue;
+            }
+
+            // 3) Field: [let] fieldName: type [= expr];
+            if (_check(TokenKind::KwLet) || _check(TokenKind::Identifier)) {
+                SourceLocation fldLoc = _peek().loc;
+                _match(TokenKind::KwLet); // Optional 'let'
+                auto field = std::make_shared<ClassFieldDecl>(fldLoc);
+                field->visibility = memberVis;
+                field->name = _consume(TokenKind::Identifier, "Expected field name").text;
+                if (_match(TokenKind::Colon)) {
+                    field->typeName = _parseTypeName();
+                }
+                if (_match(TokenKind::Assign)) {
+                    std::string expr;
+                    while (!_isAtEnd() && !_check(TokenKind::Semicolon)) {
+                        if (!expr.empty()) expr += " ";
+                        if (_peek().is(TokenKind::StringLiteral)) {
+                            expr += "\"" + _advance().text + "\"";
+                        } else {
+                            expr += _advance().text;
+                        }
+                    }
+                    field->defaultValueExpr = expr;
+                }
+                _consume(TokenKind::Semicolon, "Expected ';' after field declaration");
+                classDecl->fields.push_back(field);
+                continue;
+            }
+
+            if (_match(TokenKind::Semicolon)) continue;
+
+            throw ParserException("Unexpected declaration in class '" + className + "': '" + _peek().text + "'", _peek().loc);
+        }
+
+        _consume(TokenKind::RightBrace, "Expected '}' closing class body");
+        _match(TokenKind::Semicolon); // Optional trailing semicolon
+        return classDecl;
+    }
+
+    std::shared_ptr<StructDecl> Parser::_parseStruct(bool isExported) {
+        SourceLocation loc = _consume(TokenKind::KwStruct, "Expected 'struct'").loc;
+        std::string structName = _consume(TokenKind::Identifier, "Expected struct name identifier").text;
+        auto structDecl = std::make_shared<StructDecl>(loc);
+        structDecl->name = structName;
+        structDecl->isExported = isExported;
+
+        _consume(TokenKind::LeftBrace, "Expected '{' to start struct body");
+
+        while (!_isAtEnd() && !_check(TokenKind::RightBrace)) {
+            Visibility memberVis = Visibility::Public;
+            if (_match(TokenKind::KwPublic)) memberVis = Visibility::Public;
+            else if (_match(TokenKind::KwPrivate)) memberVis = Visibility::Private;
+            else if (_match(TokenKind::KwProtected)) memberVis = Visibility::Protected;
+
+            SourceLocation fldLoc = _peek().loc;
+            _match(TokenKind::KwLet); // Optional 'let'
+            auto field = std::make_shared<ClassFieldDecl>(fldLoc);
+            field->visibility = memberVis;
+            field->name = _consume(TokenKind::Identifier, "Expected struct field name").text;
+            if (_match(TokenKind::Colon)) {
+                field->typeName = _parseTypeName();
+            }
+            if (_match(TokenKind::Assign)) {
+                std::string expr;
+                while (!_isAtEnd() && !_check(TokenKind::Semicolon)) {
+                    if (!expr.empty()) expr += " ";
+                    if (_peek().is(TokenKind::StringLiteral)) {
+                        expr += "\"" + _advance().text + "\"";
+                    } else {
+                        expr += _advance().text;
+                    }
+                }
+                field->defaultValueExpr = expr;
+            }
+            _consume(TokenKind::Semicolon, "Expected ';' after struct field");
+            structDecl->fields.push_back(field);
+        }
+
+        _consume(TokenKind::RightBrace, "Expected '}' closing struct body");
+        _match(TokenKind::Semicolon); // Optional trailing semicolon
+        return structDecl;
+    }
+
+    std::shared_ptr<StandaloneFunctionDecl> Parser::_parseStandaloneFunction(bool isExported) {
+        SourceLocation loc = _peek().loc;
+        if (!_match(TokenKind::KwFn)) {
+            _consume(TokenKind::KwDef, "Expected 'fn' or 'def'");
+        }
+
+        auto fn = std::make_shared<StandaloneFunctionDecl>(loc);
+        fn->isExported = isExported;
+        fn->name = _consume(TokenKind::Identifier, "Expected function name").text;
+        if (fn->name == "main") {
+            fn->isMain = true;
+        }
+
+        _consume(TokenKind::LeftParen, "Expected '(' after function name");
+        while (!_isAtEnd() && !_check(TokenKind::RightParen)) {
+            ParameterDecl param;
+            param.name = _consume(TokenKind::Identifier, "Expected parameter name").text;
+            if (_match(TokenKind::Colon)) {
+                param.typeName = _parseTypeName();
+            }
+            fn->parameters.push_back(param);
+            if (!_check(TokenKind::RightParen)) {
+                _consume(TokenKind::Comma, "Expected ',' between parameters");
+            }
+        }
+        _consume(TokenKind::RightParen, "Expected ')' closing parameter list");
+
+        if (_match(TokenKind::Colon) || _match(TokenKind::Arrow)) {
+            fn->returnType = _parseTypeName();
+        }
+
+        fn->body = _parseStatementBody();
+        return fn;
+    }
+
+    std::string Parser::_parseStatementBody() {
+        _consume(TokenKind::LeftBrace, "Expected '{' to start body");
+        int braceDepth = 1;
+        std::ostringstream oss;
+        bool lastWasNoSpaceAfter = true;
+
+        auto appendToken = [&](const std::string& text, bool spaceBefore = true, bool spaceAfter = true) {
+            if (spaceBefore && !lastWasNoSpaceAfter && oss.tellp() > 0) {
+                oss << " ";
+            }
+            oss << text;
+            lastWasNoSpaceAfter = !spaceAfter;
+        };
+
+        while (!_isAtEnd() && braceDepth > 0) {
+            if (_check(TokenKind::LeftBrace)) {
+                braceDepth++;
+                appendToken("{", true, true);
+                _advance();
+                continue;
+            }
+            if (_check(TokenKind::RightBrace)) {
+                braceDepth--;
+                if (braceDepth == 0) {
+                    _advance(); // Consume outer closing '}'
+                    break;
+                }
+                appendToken("}", true, true);
+                _advance();
+                continue;
+            }
+
+            // Member access: this.<ident> -> this-><ident>
+            if (_check(TokenKind::KwThis)) {
+                _advance();
+                if (_match(TokenKind::Dot)) {
+                    appendToken("this->", true, false);
+                } else {
+                    appendToken("this", true, true);
+                }
+                continue;
+            }
+
+            // Variable declaration: let <ident> [: <type>] [= <expr>];
+            if (_check(TokenKind::KwLet)) {
+                _advance(); // Consume 'let'
+                std::string varName = _consume(TokenKind::Identifier, "Expected variable name after 'let'").text;
+                std::string varType = "auto";
+                if (_match(TokenKind::Colon)) {
+                    varType = _parseTypeName();
+                }
+                if (varType == "string") varType = "std::string";
+                appendToken(varType + " " + varName, true, true);
+                continue;
+            }
+
+            // Stream print: print(...) -> keet::io::print(...)
+            if (_check(TokenKind::KwPrint) || (_check(TokenKind::Identifier) && _peek().text == "print")) {
+                _advance();
+                appendToken("keet::io::print", true, false);
+                continue;
+            }
+
+            // Punctuation formatting
+            if (_check(TokenKind::Semicolon)) {
+                appendToken(";", false, true);
+                _advance();
+                continue;
+            }
+            if (_check(TokenKind::Comma)) {
+                appendToken(",", false, true);
+                _advance();
+                continue;
+            }
+            if (_check(TokenKind::LeftParen)) {
+                appendToken("(", false, false);
+                _advance();
+                continue;
+            }
+            if (_check(TokenKind::RightParen)) {
+                appendToken(")", false, true);
+                _advance();
+                continue;
+            }
+            if (_check(TokenKind::LeftBracket)) {
+                appendToken("[", false, false);
+                _advance();
+                continue;
+            }
+            if (_check(TokenKind::RightBracket)) {
+                appendToken("]", false, true);
+                _advance();
+                continue;
+            }
+
+            if (_peek().is(TokenKind::StringLiteral)) {
+                appendToken("\"" + _advance().text + "\"", true, true);
+            } else {
+                appendToken(_advance().text, true, true);
+            }
+        }
+
+        return oss.str();
     }
 
 } // namespace Keety
