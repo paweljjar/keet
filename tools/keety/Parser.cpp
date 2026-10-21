@@ -278,6 +278,8 @@ namespace Keety {
                 script->letDecls.push_back(_parseLetDecl());
             } else if (_check(TokenKind::KwDef)) {
                 script->functions.push_back(_parseFunctionDecl());
+            } else if (_check(TokenKind::KwErrtype) || (_check(TokenKind::Identifier) && _peek().text == "errtype")) {
+                script->errtypes.push_back(_parseErrtype(false));
             } else {
                 throw ParserException("Unexpected declaration in <script>: '" + _peek().text + "'", _peek().loc);
             }
@@ -437,7 +439,7 @@ namespace Keety {
             SourceLocation loc = _advance().loc; // Consume '{'
             std::string expr = _consume(TokenKind::RawText, "Expected expression inside interpolation").text;
             _consume(TokenKind::RightBrace, "Expected '}' after interpolation");
-            return std::make_shared<InterpolationNode>(expr, loc);
+            return std::make_shared<InterpolationNode>(transformZonk(expr), loc);
         } else if (_check(TokenKind::KwIf)) {
             return _parseIfBlock();
         } else if (_check(TokenKind::KwFor)) {
@@ -592,7 +594,7 @@ namespace Keety {
             } else if (_match(TokenKind::LeftBrace)) {
                 std::string expr = _consume(TokenKind::RawText, "Expected expression inside attribute value").text;
                 _consume(TokenKind::RightBrace, "Expected '}' closing attribute expression");
-                attr.rawValue = expr;
+                attr.rawValue = transformZonk(expr);
 
                 if (attr.name.rfind("on", 0) == 0 && attr.name.size() > 2 && std::isupper(static_cast<unsigned char>(attr.name[2]))) {
                     attr.kind = AttributeKind::EventCallback;
@@ -761,15 +763,19 @@ namespace Keety {
                     mod->classes.push_back(_parseClass(true));
                 } else if (_check(TokenKind::KwStruct)) {
                     mod->structs.push_back(_parseStruct(true));
+                } else if (_check(TokenKind::KwErrtype) || (_check(TokenKind::Identifier) && _peek().text == "errtype")) {
+                    mod->errtypes.push_back(_parseErrtype(true));
                 } else if (_check(TokenKind::KwFn) || _check(TokenKind::KwDef)) {
                     mod->functions.push_back(_parseStandaloneFunction(true));
                 } else {
-                    throw ParserException("Expected 'class', 'struct', or 'fn' after 'export'", _peek().loc);
+                    throw ParserException("Expected 'class', 'struct', 'errtype', or 'fn' after 'export'", _peek().loc);
                 }
             } else if (_check(TokenKind::KwClass)) {
                 mod->classes.push_back(_parseClass(false));
             } else if (_check(TokenKind::KwStruct)) {
                 mod->structs.push_back(_parseStruct(false));
+            } else if (_check(TokenKind::KwErrtype) || (_check(TokenKind::Identifier) && _peek().text == "errtype")) {
+                mod->errtypes.push_back(_parseErrtype(false));
             } else if (_check(TokenKind::KwFn) || _check(TokenKind::KwDef)) {
                 mod->functions.push_back(_parseStandaloneFunction(false));
             } else if (_match(TokenKind::Semicolon)) {
@@ -1079,6 +1085,10 @@ namespace Keety {
                     varType = _parseTypeName();
                 }
                 if (varType == "string") varType = "std::string";
+                else if (varType == "io::Buffer" || varType == "io.Buffer" || varType == "Buffer") varType = "Buffer";
+                else if (varType == "file::File" || varType == "file.File" || varType == "File") varType = "File";
+                else if (varType == "vector<string>") varType = "std::vector<std::string>";
+                else if (varType.rfind("vector<", 0) == 0) varType = "std::" + varType;
                 appendToken(varType + " " + varName, true, true);
                 continue;
             }
@@ -1140,7 +1150,154 @@ namespace Keety {
             }
         }
 
-        return oss.str();
+        return transformZonk(oss.str());
+    }
+
+    std::shared_ptr<ErrtypeDecl> Parser::_parseErrtype(bool isExported) {
+        SourceLocation loc = (_check(TokenKind::KwErrtype) || _check(TokenKind::Identifier)) ? _advance().loc : _peek().loc;
+        std::string name = _consume(TokenKind::Identifier, "Expected errtype name identifier").text;
+        _consume(TokenKind::LeftBrace, "Expected '{' after errtype name");
+        auto errtype = std::make_shared<ErrtypeDecl>(loc);
+        errtype->name = name;
+        errtype->isExported = isExported;
+
+        while (!_isAtEnd() && !_check(TokenKind::RightBrace)) {
+            std::string entryName = _consume(TokenKind::Identifier, "Expected error entry identifier").text;
+            int code = 0;
+            bool hasCode = false;
+            if (_match(TokenKind::Assign)) {
+                std::string numStr = _consume(TokenKind::NumberLiteral, "Expected numeric error code after '='").text;
+                code = std::stoi(numStr);
+                hasCode = true;
+            }
+            errtype->fields.push_back(ErrtypeField{.name = entryName, .code = code, .hasCode = hasCode});
+            if (_match(TokenKind::Comma) || _match(TokenKind::Semicolon)) {
+                // optional delimiter
+            }
+        }
+        _consume(TokenKind::RightBrace, "Expected '}' closing errtype block");
+        return errtype;
+    }
+
+    std::string Parser::transformZonk(std::string s) {
+        size_t pos = 0;
+        while (true) {
+            pos = s.find("zonk", pos);
+            if (pos == std::string::npos) break;
+
+            bool validBefore = (pos == 0) || (!std::isalnum(static_cast<unsigned char>(s[pos - 1])) && s[pos - 1] != '_');
+            bool validAfter = (pos + 4 >= s.size()) || (!std::isalnum(static_cast<unsigned char>(s[pos + 4])) && s[pos + 4] != '_');
+
+            if (!validBefore || !validAfter) {
+                pos += 4;
+                continue;
+            }
+
+            bool insideStr = false;
+            for (size_t k = 0; k < pos; ++k) {
+                if (s[k] == '"' && (k == 0 || s[k - 1] != '\\')) {
+                    insideStr = !insideStr;
+                }
+            }
+            if (insideStr) {
+                pos += 4;
+                continue;
+            }
+
+            int64_t i = static_cast<int64_t>(pos) - 1;
+            while (i >= 0 && std::isspace(static_cast<unsigned char>(s[i]))) i--;
+
+            int pParen = 0, pBracket = 0, pBrace = 0;
+            bool inQuote = false;
+            int64_t lhsEnd = i + 1;
+            int64_t lhsStart = 0;
+
+            for (; i >= 0; --i) {
+                char c = s[i];
+                if (c == '"' && (i == 0 || s[i - 1] != '\\')) {
+                    inQuote = !inQuote;
+                    continue;
+                }
+                if (inQuote) continue;
+
+                if (c == ')') pParen++;
+                else if (c == '(') {
+                    if (pParen == 0) { lhsStart = i + 1; break; }
+                    pParen--;
+                }
+                else if (c == ']') pBracket++;
+                else if (c == '[') {
+                    if (pBracket == 0) { lhsStart = i + 1; break; }
+                    pBracket--;
+                }
+                else if (c == '}') pBrace++;
+                else if (c == '{') {
+                    if (pBrace == 0) { lhsStart = i + 1; break; }
+                    pBrace--;
+                }
+                else if (pParen == 0 && pBracket == 0 && pBrace == 0) {
+                    if (c == '=' || c == ';' || c == ',' || c == ':') {
+                        lhsStart = i + 1;
+                        break;
+                    }
+                    if (i >= 6 && s.substr(i - 6, 7) == "return ") {
+                        lhsStart = i + 1;
+                        break;
+                    }
+                }
+            }
+            if (i < 0) lhsStart = 0;
+
+            while (lhsStart < lhsEnd && std::isspace(static_cast<unsigned char>(s[lhsStart]))) lhsStart++;
+            while (lhsEnd > lhsStart && std::isspace(static_cast<unsigned char>(s[lhsEnd - 1]))) lhsEnd--;
+
+            std::string lhs = s.substr(lhsStart, lhsEnd - lhsStart);
+
+            size_t j = pos + 4;
+            while (j < s.size() && std::isspace(static_cast<unsigned char>(s[j]))) j++;
+            size_t rhsStart = j;
+
+            pParen = 0; pBracket = 0; pBrace = 0; inQuote = false;
+            size_t rhsEnd = s.size();
+
+            for (; j < s.size(); ++j) {
+                char c = s[j];
+                if (c == '"' && (j == 0 || s[j - 1] != '\\')) {
+                    inQuote = !inQuote;
+                    continue;
+                }
+                if (inQuote) continue;
+
+                if (c == '(') pParen++;
+                else if (c == ')') {
+                    if (pParen == 0) { rhsEnd = j; break; }
+                    pParen--;
+                }
+                else if (c == '[') pBracket++;
+                else if (c == ']') {
+                    if (pBracket == 0) { rhsEnd = j; break; }
+                    pBracket--;
+                }
+                else if (c == '{') pBrace++;
+                else if (c == '}') {
+                    if (pBrace == 0) { rhsEnd = j; break; }
+                    pBrace--;
+                }
+                else if (pParen == 0 && pBracket == 0 && pBrace == 0) {
+                    if (c == ';' || c == ',') {
+                        rhsEnd = j;
+                        break;
+                    }
+                }
+            }
+            while (rhsEnd > rhsStart && std::isspace(static_cast<unsigned char>(s[rhsEnd - 1]))) rhsEnd--;
+            std::string rhs = s.substr(rhsStart, rhsEnd - rhsStart);
+
+            std::string replacement = "KEET_ZONK(" + lhs + ", " + rhs + ")";
+            s.replace(lhsStart, rhsEnd - lhsStart, replacement);
+            pos = lhsStart + replacement.size();
+        }
+        return s;
     }
 
 } // namespace Keety

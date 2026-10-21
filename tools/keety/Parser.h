@@ -96,9 +96,11 @@ namespace Keety {
             std::unique_ptr<PureModule> _parsePureModule();
             std::shared_ptr<ClassDecl> _parseClass(bool isExported);
             std::shared_ptr<StructDecl> _parseStruct(bool isExported);
+            std::shared_ptr<ErrtypeDecl> _parseErrtype(bool isExported);
             std::shared_ptr<StandaloneFunctionDecl> _parseStandaloneFunction(bool isExported);
             std::string _parseTypeName();
             std::string _parseStatementBody();
+            static std::string transformZonk(std::string s);
 
             std::vector<Token> _tokens;
             std::string _componentName;

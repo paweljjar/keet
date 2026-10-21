@@ -97,6 +97,8 @@ namespace Keety {
         KwModule, // module
         KwThis, // this
         KwPrint, // print
+        KwErrtype, // errtype
+        KwZonk, // zonk
 
         // Literals and identifiers
         Identifier, // Alphanumeric identifier (e.g., count, onClick, title)
@@ -208,6 +210,8 @@ namespace Keety {
                 case TokenKind::KwModule: return "module";
                 case TokenKind::KwThis: return "this";
                 case TokenKind::KwPrint: return "print";
+                case TokenKind::KwErrtype: return "errtype";
+                case TokenKind::KwZonk: return "zonk";
                 case TokenKind::Identifier: return "identifier";
                 case TokenKind::StringLiteral: return "string literal";
                 case TokenKind::NumberLiteral: return "number literal";

@@ -5,6 +5,7 @@
 
 #include <keet/Testing.h>
 #include <keet/runtime/File.h>
+#include <keet/runtime/Lang.h>
 #include <vector>
 #include <string>
 
@@ -88,6 +89,65 @@ KEET_TEST(RuntimeFile, FileRAIIAndLineReading) {
     }
 
     File::remove(path);
+}
+
+KEET_TEST(RuntimeFile, DirectoryOperations) {
+    const std::string testDir = "build/tmp/test_dir_suite/nested/sub";
+    File::remove("build/tmp/test_dir_suite");
+
+    KEET_ASSERT_FALSE(File::exists(testDir));
+    KEET_ASSERT_FALSE(File::isDirectory(testDir));
+
+    // createDir (recursive mkdir -p)
+    bool created = File::createDir(testDir);
+    KEET_ASSERT_TRUE(created);
+    KEET_ASSERT_TRUE(File::exists(testDir));
+    KEET_ASSERT_TRUE(File::isDirectory(testDir));
+
+    // write files in testDir
+    File::writeText(testDir + "/file1.txt", "Hello 1");
+    File::writeText(testDir + "/file2.txt", "Hello 2");
+
+    // listDir
+    std::vector<std::string> entries = File::listDir(testDir);
+    KEET_ASSERT_EQ(entries.size(), 2);
+
+    bool hasFile1 = false, hasFile2 = false;
+    for (const auto& name : entries) {
+        if (name == "file1.txt") hasFile1 = true;
+        if (name == "file2.txt") hasFile2 = true;
+    }
+    KEET_ASSERT_TRUE(hasFile1);
+    KEET_ASSERT_TRUE(hasFile2);
+
+    // Clean up
+    File::remove("build/tmp/test_dir_suite");
+    KEET_ASSERT_FALSE(File::exists("build/tmp/test_dir_suite"));
+}
+
+KEET_TEST(RuntimeFile, ErrorHandlingAndZonk) {
+    const std::string missingPath = "build/tmp/nonexistent_file_12345.json";
+    File::remove(missingPath);
+
+    // Verify readText throws std::runtime_error when file does not exist
+    bool threw = false;
+    try {
+        File::readText(missingPath);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    KEET_ASSERT_TRUE(threw);
+
+    // Verify KEET_ZONK intercepts error and returns fallback
+    std::string fallback = KEET_ZONK(File::readText(missingPath), "{}");
+    KEET_ASSERT_EQ(fallback, "{}");
+
+    // Write file and verify KEET_ZONK returns actual content when no error occurs
+    File::writeText(missingPath, "{\"active\": true}");
+    std::string actual = KEET_ZONK(File::readText(missingPath), "{}");
+    KEET_ASSERT_EQ(actual, "{\"active\": true}");
+
+    File::remove(missingPath);
 }
 
 KEET_TEST_MAIN()

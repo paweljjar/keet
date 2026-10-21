@@ -22,6 +22,21 @@
 #undef stderr
 #endif
 
+// =============================================================================
+// Zonk Operator Macro (Inline Exception & Failure Recovery)
+// =============================================================================
+#ifndef KEET_ZONK
+#define KEET_ZONK(EXPR, FALLBACK) ([&]() { \
+    try { \
+        auto _keet_val = (EXPR); \
+        return _keet_val; \
+    } catch (...) { \
+        using _KeetValType = decltype(EXPR); \
+        return static_cast<std::decay_t<_KeetValType>>(FALLBACK); \
+    } \
+}())
+#endif
+
 namespace keet::lang {
 
     // =========================================================================
@@ -33,6 +48,9 @@ namespace keet::lang {
         using File = keet::file::File;
 
         static bool exists(const std::string& path) { return keet::file::File::exists(path); }
+        static bool isDirectory(const std::string& path) { return keet::file::File::isDirectory(path); }
+        static bool createDir(const std::string& path) { return keet::file::File::createDir(path); }
+        static std::vector<std::string> listDir(const std::string& path) { return keet::file::File::listDir(path); }
         static std::string readText(const std::string& path) { return keet::file::File::readText(path); }
         static bool writeText(const std::string& path, const std::string& text) { return keet::file::File::writeText(path, text); }
         static bool appendText(const std::string& path, const std::string& text) { return keet::file::File::appendText(path, text); }

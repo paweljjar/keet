@@ -90,6 +90,8 @@ namespace Keety {
         if (text == "module") return Token(TokenKind::KwModule, text, loc);
         if (text == "this") return Token(TokenKind::KwThis, text, loc);
         if (text == "print") return Token(TokenKind::KwPrint, text, loc);
+        if (text == "errtype") return Token(TokenKind::KwErrtype, text, loc);
+        if (text == "zonk") return Token(TokenKind::KwZonk, text, loc);
 
         return Token(TokenKind::Identifier, text, loc);
     }
@@ -198,6 +200,12 @@ namespace Keety {
                 } else if (c == '>' && _peek(1) == '=') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, ">=", loc);
+                } else if (c == '<') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::LessThan, "<", loc);
+                } else if (c == '>') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::GreaterThan, ">", loc);
                 } else if (c == '&' && _peek(1) == '&') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, "&&", loc);
@@ -292,6 +300,12 @@ namespace Keety {
                 } else if (c == '>' && _peek(1) == '=') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, ">=", loc);
+                } else if (c == '<') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::LessThan, "<", loc);
+                } else if (c == '>') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::GreaterThan, ">", loc);
                 } else if (c == '&' && _peek(1) == '&') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, "&&", loc);
@@ -374,6 +388,12 @@ namespace Keety {
                 } else if (c == '>' && _peek(1) == '=') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, ">=", loc);
+                } else if (c == '<') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::LessThan, "<", loc);
+                } else if (c == '>') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::GreaterThan, ">", loc);
                 } else if (c == '&' && _peek(1) == '&') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, "&&", loc);

@@ -17,6 +17,7 @@ namespace Keety {
         if (typeName == "bool") return "bool";
         if (typeName == "void") return "void";
         if (typeName.empty()) return "void";
+        if (typeName == "vector<string>") return "std::vector<std::string>";
         if (typeName.rfind("vector<", 0) == 0) return "std::" + typeName;
         if (typeName == "io::Buffer" || typeName == "io.Buffer" || typeName == "Buffer") return "keet::io::BufferView";
         if (typeName == "file::File" || typeName == "file.File" || typeName == "File") return "keet::file::File";
@@ -687,6 +688,20 @@ namespace Keety {
                 os << ";\n";
             }
             os << "    };\n\n";
+        }
+
+        // Error Type Enum declarations (errtype)
+        for (const auto& et : mod.errtypes) {
+            os << "    enum class " << et->name << " : int {\n";
+            for (const auto& fld : et->fields) {
+                os << "        " << fld.name;
+                if (fld.hasCode) {
+                    os << " = " << fld.code;
+                }
+                os << ",\n";
+            }
+            os << "    };\n\n";
+            os << "    inline int getErrorCode(" << et->name << " err) { return static_cast<int>(err); }\n\n";
         }
 
         // Class declarations with separated public, protected, private sections

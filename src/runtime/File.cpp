@@ -172,6 +172,28 @@ namespace keet::file {
         return std::filesystem::exists(path, ec);
     }
 
+    bool File::isDirectory(const std::string& path) {
+        std::error_code ec;
+        return std::filesystem::is_directory(path, ec);
+    }
+
+    bool File::createDir(const std::string& path) {
+        std::error_code ec;
+        return std::filesystem::create_directories(path, ec);
+    }
+
+    std::vector<std::string> File::listDir(const std::string& path) {
+        std::vector<std::string> entries;
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec) || !std::filesystem::is_directory(path, ec)) {
+            return entries;
+        }
+        for (const auto& entry : std::filesystem::directory_iterator(path, ec)) {
+            entries.push_back(entry.path().filename().string());
+        }
+        return entries;
+    }
+
     size_t File::getFileSize(const std::string& path) {
         std::error_code ec;
         uintmax_t sz = std::filesystem::file_size(path, ec);
@@ -180,16 +202,28 @@ namespace keet::file {
 
     bool File::remove(const std::string& path) {
         std::error_code ec;
-        return std::filesystem::remove(path, ec);
+        return std::filesystem::remove_all(path, ec) > 0;
     }
 
     std::string File::readText(const std::string& path) {
+        if (!exists(path)) {
+            throw std::runtime_error("File not found: " + path);
+        }
         File f(path, FileMode::ReadOnly);
+        if (!f.isOpen()) {
+            throw std::runtime_error("Could not open file: " + path);
+        }
         return f.readAllText();
     }
 
     std::vector<uint8_t> File::readBytes(const std::string& path) {
+        if (!exists(path)) {
+            throw std::runtime_error("File not found: " + path);
+        }
         File f(path, FileMode::ReadOnly);
+        if (!f.isOpen()) {
+            throw std::runtime_error("Could not open file: " + path);
+        }
         return f.readAllBytes();
     }
 

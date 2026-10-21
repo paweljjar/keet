@@ -304,6 +304,20 @@ namespace Keety {
                 _indent -= _indentStep;
             }
 
+            void visit(const ErrtypeDecl& node) override {
+                _emitIndent();
+                if (node.isExported) _out << "export ";
+                _out << "Errtype: " << node.name << " (" << node.fields.size() << " entries)\n";
+                _indent += _indentStep;
+                for (const auto& entry : node.fields) {
+                    _emitIndent();
+                    _out << entry.name;
+                    if (entry.hasCode) _out << " = " << entry.code;
+                    _out << "\n";
+                }
+                _indent -= _indentStep;
+            }
+
             void visit(const StandaloneFunctionDecl& node) override {
                 _emitIndent();
                 if (node.isExported) _out << "export ";
@@ -321,11 +335,13 @@ namespace Keety {
                 _emitIndent();
                 _out << "PureModule: " << node.moduleName << " (" << node.imports.size() << " imports, "
                      << node.classes.size() << " classes, " << node.structs.size() << " structs, "
+                     << node.errtypes.size() << " errtypes, "
                      << node.functions.size() << " functions)\n";
                 _indent += _indentStep;
                 for (const auto& imp : node.imports) imp->accept(*this);
                 for (const auto& cls : node.classes) cls->accept(*this);
                 for (const auto& st : node.structs) st->accept(*this);
+                for (const auto& et : node.errtypes) et->accept(*this);
                 for (const auto& fn : node.functions) fn->accept(*this);
                 _indent -= _indentStep;
             }

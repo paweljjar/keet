@@ -53,6 +53,7 @@ namespace Keety {
     struct ClassMethodDecl;
     struct ClassDecl;
     struct StructDecl;
+    struct ErrtypeDecl;
     struct StandaloneFunctionDecl;
     struct PureModule;
 
@@ -86,6 +87,7 @@ namespace Keety {
             virtual void visit(const ClassMethodDecl& node) = 0;
             virtual void visit(const ClassDecl& node) = 0;
             virtual void visit(const StructDecl& node) = 0;
+            virtual void visit(const ErrtypeDecl& node) = 0;
             virtual void visit(const StandaloneFunctionDecl& node) = 0;
             virtual void visit(const PureModule& node) = 0;
     };
@@ -229,6 +231,7 @@ namespace Keety {
         std::vector<std::shared_ptr<StateDecl>> stateDecls; // Reactive state variables
         std::vector<std::shared_ptr<LetDecl>> letDecls; // Props and local constants
         std::vector<std::shared_ptr<FunctionDecl>> functions; // Component methods
+        std::vector<std::shared_ptr<ErrtypeDecl>> errtypes; // Error type definitions
 
         explicit ScriptBlock(SourceLocation l = {}) : ASTNode(std::move(l)) {}
 
@@ -436,6 +439,21 @@ namespace Keety {
         void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
     };
 
+    struct ErrtypeField { // Single entry in an error enum
+        std::string name;
+        int code = 0;
+        bool hasCode = false;
+    };
+
+    struct ErrtypeDecl : public ASTNode { // Strongly-typed error enum (errtype FileError { NotFound = 404, ... })
+        std::string name; // Error enum identifier
+        bool isExported = false; // export errtype ...
+        std::vector<ErrtypeField> fields; // Enumeration entries
+
+        explicit ErrtypeDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
     struct StandaloneFunctionDecl : public ASTNode { // Top-level pure function (fn add(a: int, b: int): int { ... })
         std::string name; // Function name
         std::string returnType = "void"; // Return type
@@ -453,6 +471,7 @@ namespace Keety {
         std::vector<std::shared_ptr<ImportCppDecl>> imports; // C++ header imports
         std::vector<std::shared_ptr<ClassDecl>> classes; // Class declarations
         std::vector<std::shared_ptr<StructDecl>> structs; // Struct declarations
+        std::vector<std::shared_ptr<ErrtypeDecl>> errtypes; // Error type enum declarations
         std::vector<std::shared_ptr<StandaloneFunctionDecl>> functions; // Top-level functions
 
         explicit PureModule(SourceLocation l = {}) : ASTNode(std::move(l)) {}

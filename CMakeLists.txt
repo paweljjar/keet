@@ -131,6 +131,10 @@ keet_add_test(keet_test_standalone_keetscript tests/test_standalone_keetscript.c
 keet_add_executable(keet_test_standalone_app tests/StandaloneApp.keet)
 add_test(NAME keet_test_standalone_app COMMAND keet_test_standalone_app)
 
+# Feature Demo 8 Native Executable (file primitives, io streams, zonk error handling, errtype)
+keet_add_executable(demo_feature8 tests/DemoFeature8.keet)
+add_test(NAME demo_feature8 COMMAND demo_feature8)
+
 # libkeet Minimal Base Runtime - I/O Streams and Formatting unit test
 keet_add_test(keet_test_runtime_io tests/test_runtime_io.cpp)
 
