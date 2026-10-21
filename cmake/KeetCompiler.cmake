@@ -65,3 +65,63 @@ function(keet_add_application TARGET_NAME MAIN_KEET_FILE)
     target_include_directories(${TARGET_NAME} PRIVATE "${GENERATED_DIR}")
     target_link_libraries(${TARGET_NAME} PRIVATE keet)
 endfunction()
+
+# keet_add_library(<target> <sources.keet...>)
+# Compiles one or more pure KeetScript modules into C++20 header/source pairs
+# and defines a static library target linkable by any C++ application.
+function(keet_add_library TARGET_NAME)
+    set(KEET_SOURCES ${ARGN})
+    set(GENERATED_SRCS "")
+    set(GENERATED_HEADERS "")
+    set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/keet")
+    file(MAKE_DIRECTORY "${GENERATED_DIR}")
+
+    foreach(KEET_FILE IN LISTS KEET_SOURCES)
+        get_filename_component(FILE_NAME "${KEET_FILE}" NAME_WE)
+        get_filename_component(KEET_ABS "${KEET_FILE}" ABSOLUTE)
+
+        set(OUT_CPP "${GENERATED_DIR}/${FILE_NAME}.cpp")
+        set(OUT_H "${GENERATED_DIR}/${FILE_NAME}.h")
+
+        add_custom_command(
+            OUTPUT "${OUT_CPP}" "${OUT_H}"
+            COMMAND keety --lib -i "${KEET_ABS}" -o "${OUT_CPP}" -h "${OUT_H}" -c "${FILE_NAME}"
+            DEPENDS "${KEET_ABS}" keety
+            COMMENT "keety: compiling library module ${KEET_FILE} -> ${OUT_CPP} & ${OUT_H} 🐱"
+            VERBATIM
+        )
+
+        list(APPEND GENERATED_SRCS "${OUT_CPP}")
+        list(APPEND GENERATED_HEADERS "${OUT_H}")
+    endforeach()
+
+    add_library(${TARGET_NAME} STATIC ${GENERATED_SRCS} ${GENERATED_HEADERS})
+    target_include_directories(${TARGET_NAME} PUBLIC "${GENERATED_DIR}")
+    target_compile_features(${TARGET_NAME} PUBLIC cxx_std_20)
+endfunction()
+
+# keet_add_executable(<target> <main_keet_file> [EXTRA_SOURCES...])
+# Compiles a standalone KeetScript source file containing fn main() into a native executable binary.
+function(keet_add_executable TARGET_NAME MAIN_KEET_FILE)
+    set(EXTRA_SOURCES ${ARGN})
+    set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/keet")
+    file(MAKE_DIRECTORY "${GENERATED_DIR}")
+
+    get_filename_component(FILE_NAME "${MAIN_KEET_FILE}" NAME_WE)
+    get_filename_component(KEET_ABS "${MAIN_KEET_FILE}" ABSOLUTE)
+
+    set(OUT_CPP "${GENERATED_DIR}/${FILE_NAME}.cpp")
+    set(OUT_H "${GENERATED_DIR}/${FILE_NAME}.h")
+
+    add_custom_command(
+        OUTPUT "${OUT_CPP}" "${OUT_H}"
+        COMMAND keety -i "${KEET_ABS}" -o "${OUT_CPP}" -h "${OUT_H}" -c "${FILE_NAME}"
+        DEPENDS "${KEET_ABS}" keety
+        COMMENT "keety: compiling standalone executable ${MAIN_KEET_FILE} -> ${TARGET_NAME} 🐱"
+        VERBATIM
+    )
+
+    add_executable(${TARGET_NAME} "${OUT_CPP}" "${OUT_H}" ${EXTRA_SOURCES})
+    target_include_directories(${TARGET_NAME} PRIVATE "${GENERATED_DIR}")
+    target_compile_features(${TARGET_NAME} PRIVATE cxx_std_20)
+endfunction()
