@@ -30,7 +30,19 @@ if(ENABLE_TSAN)
     add_link_options(-fsanitize=thread)
 endif()
 
-# Define the static library target
+# Define the minimal base runtime library target (Feature 8)
+add_library(keet_runtime STATIC
+        src/runtime/IO.cpp
+)
+
+target_include_directories(keet_runtime PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+
+target_compile_features(keet_runtime PUBLIC cxx_std_20)
+
+# Define the full static library target
 add_library(keet STATIC
         src/Server.cpp
         src/Middleware.cpp
@@ -55,6 +67,7 @@ target_compile_definitions(keet PRIVATE
 )
 
 target_link_libraries(keet PUBLIC
+        keet_runtime
         Threads::Threads
         ${CMAKE_DL_LIBS}
 )
@@ -113,3 +126,6 @@ keet_add_test(keet_test_standalone_keetscript tests/test_standalone_keetscript.c
 # Standalone KeetScript Native Executable test
 keet_add_executable(keet_test_standalone_app tests/StandaloneApp.keet)
 add_test(NAME keet_test_standalone_app COMMAND keet_test_standalone_app)
+
+# libkeet Minimal Base Runtime - I/O and File Primitives unit test
+keet_add_test(keet_test_runtime_io tests/test_runtime_io.cpp)
