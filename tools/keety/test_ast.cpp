@@ -254,6 +254,118 @@ int main() {
     assert(parsedFile->server->frontend->pageTitle == "Todos App");
 
     std::cout << "Parser verification of <server> block passed! 🐱" << std::endl;
+
+    // Test Standalone KeetScript pure module lexing (without XML tags)
+    std::string pureModuleSource = R"(
+fn add(a: int, b: int): int {
+    return a + b;
+}
+
+export class Foo {
+    public let c: int;
+    private let d: int = 4;
+
+    Foo(a: int, b: int) {
+        this.c = a + b;
+        print(subtract());
+    }
+
+    private fn subtract(): int {
+        return this.c - this.d;
+    }
+}
+
+fn main(): void {
+    let c: int = add(4, 5);
+    print("Hello, World! 4 + 5 =", c);
+}
+)";
+
+    Lexer moduleLexer(pureModuleSource, "PureModule.keet");
+    auto modTokens = moduleLexer.tokenize();
+    assert(!modTokens.empty());
+    bool foundFn = false, foundExport = false, foundClass = false;
+    bool foundPublic = false, foundPrivate = false, foundThis = false, foundPrint = false;
+    for (const auto& tok : modTokens) {
+        if (tok.is(TokenKind::KwFn)) foundFn = true;
+        if (tok.is(TokenKind::KwExport)) foundExport = true;
+        if (tok.is(TokenKind::KwClass)) foundClass = true;
+        if (tok.is(TokenKind::KwPublic)) foundPublic = true;
+        if (tok.is(TokenKind::KwPrivate)) foundPrivate = true;
+        if (tok.is(TokenKind::KwThis)) foundThis = true;
+        if (tok.is(TokenKind::KwPrint)) foundPrint = true;
+    }
+    assert(foundFn && foundExport && foundClass && foundPublic && foundPrivate && foundThis && foundPrint);
+    std::cout << "Standalone KeetScript pure module tokenization passed! 🐱" << std::endl;
+
+    // Test Standalone KeetScript PureModule AST and ASTPrinter
+    auto pureFile = std::make_unique<SourceFile>("MathModule");
+    pureFile->isPureModule = true;
+    auto mod = std::make_unique<PureModule>();
+    mod->moduleName = "Math";
+
+    auto addFn = std::make_shared<StandaloneFunctionDecl>();
+    addFn->name = "add";
+    addFn->returnType = "int";
+    addFn->isExported = true;
+    addFn->parameters.push_back(ParameterDecl{.name = "a", .typeName = "int"});
+    addFn->parameters.push_back(ParameterDecl{.name = "b", .typeName = "int"});
+    addFn->body = "return a + b;";
+    mod->functions.push_back(addFn);
+
+    auto fooClass = std::make_shared<ClassDecl>();
+    fooClass->name = "Foo";
+    fooClass->isExported = true;
+
+    auto fieldC = std::make_shared<ClassFieldDecl>();
+    fieldC->name = "c";
+    fieldC->typeName = "int";
+    fieldC->visibility = Visibility::Public;
+    fooClass->fields.push_back(fieldC);
+
+    auto fieldD = std::make_shared<ClassFieldDecl>();
+    fieldD->name = "d";
+    fieldD->typeName = "int";
+    fieldD->visibility = Visibility::Private;
+    fieldD->defaultValueExpr = "4";
+    fooClass->fields.push_back(fieldD);
+
+    auto ctorFoo = std::make_shared<ConstructorDecl>();
+    ctorFoo->name = "Foo";
+    ctorFoo->parameters.push_back(ParameterDecl{.name = "a", .typeName = "int"});
+    ctorFoo->parameters.push_back(ParameterDecl{.name = "b", .typeName = "int"});
+    ctorFoo->body = "this->c = a + b;\nprint(subtract());";
+    fooClass->constructors.push_back(ctorFoo);
+
+    auto methodSub = std::make_shared<ClassMethodDecl>();
+    methodSub->name = "subtract";
+    methodSub->returnType = "int";
+    methodSub->visibility = Visibility::Private;
+    methodSub->body = "return this->c - this->d;";
+    fooClass->methods.push_back(methodSub);
+
+    mod->classes.push_back(fooClass);
+
+    auto mainFn = std::make_shared<StandaloneFunctionDecl>();
+    mainFn->name = "main";
+    mainFn->returnType = "void";
+    mainFn->isMain = true;
+    mainFn->body = "let c: int = add(4, 5);\nprint(\"Hello, World! 4 + 5 =\", c);";
+    mod->functions.push_back(mainFn);
+
+    pureFile->moduleBlock = std::move(mod);
+
+    std::string pureDump = printer.print(*pureFile);
+    assert(pureDump.find("PureModule: Math") != std::string::npos);
+    assert(pureDump.find("Fn: add(a: int, b: int): int") != std::string::npos);
+    assert(pureDump.find("Class: Foo (2 fields, 1 ctors, 1 methods)") != std::string::npos);
+    assert(pureDump.find("ClassField: public c: int") != std::string::npos);
+    assert(pureDump.find("ClassField: private d: int = 4") != std::string::npos);
+    assert(pureDump.find("Constructor: Foo(a: int, b: int)") != std::string::npos);
+    assert(pureDump.find("ClassMethod: private fn subtract(): int") != std::string::npos);
+    assert(pureDump.find("Fn: main(): void [main]") != std::string::npos);
+
+    std::cout << "Standalone KeetScript PureModule AST & ASTPrinter passed! 🐱" << std::endl;
     std::cout << "All Phase 1 AST assertions passed successfully! 🐱" << std::endl;
     return 0;
 }

@@ -565,7 +565,11 @@ namespace Keety {
             return attr;
         }
 
-        attr.name = _consume(TokenKind::Identifier, "Expected attribute name").text;
+        if (_peek().is(TokenKind::Identifier) || _peek().isKeyword()) {
+            attr.name = _advance().text;
+        } else {
+            attr.name = _consume(TokenKind::Identifier, "Expected attribute name").text;
+        }
 
         if (_match(TokenKind::Assign)) {
             if (_check(TokenKind::StringLiteral)) {
