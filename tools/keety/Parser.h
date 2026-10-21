@@ -92,6 +92,14 @@ namespace Keety {
             // Style rule parsers
             std::shared_ptr<StyleRule> _parseStyleRule();
 
+            // Standalone pure module and OOP parsers
+            std::unique_ptr<PureModule> _parsePureModule();
+            std::shared_ptr<ClassDecl> _parseClass(bool isExported);
+            std::shared_ptr<StructDecl> _parseStruct(bool isExported);
+            std::shared_ptr<StandaloneFunctionDecl> _parseStandaloneFunction(bool isExported);
+            std::string _parseTypeName();
+            std::string _parseStatementBody();
+
             std::vector<Token> _tokens;
             std::string _componentName;
             size_t _cursor = 0;
