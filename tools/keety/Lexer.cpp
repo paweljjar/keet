@@ -186,6 +186,12 @@ namespace Keety {
                 } else if (c == '!' && _peek(1) == '=') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, "!=", loc);
+                } else if (c == '<' && _peek(1) == '<') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, "<<", loc);
+                } else if (c == '>' && _peek(1) == '>') {
+                    _advance(); _advance();
+                    tokens.emplace_back(TokenKind::Invalid, ">>", loc);
                 } else if (c == '<' && _peek(1) == '=') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, "<=", loc);

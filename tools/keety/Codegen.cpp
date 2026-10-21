@@ -648,11 +648,23 @@ namespace Keety {
         os << "#include <keet/runtime/IO.h>\n";
         os << "#include <keet/runtime/Math.h>\n";
         os << "#include <keet/runtime/Memory.h>\n";
-        os << "#include <keet/runtime/Collections.h>\n\n";
+        os << "#include <keet/runtime/Collections.h>\n";
+        os << "#include <keet/runtime/Lang.h>\n\n";
 
         bool hasNamespace = !mod.moduleName.empty();
         if (hasNamespace) {
             os << "namespace " << mod.moduleName << " {\n\n";
+            os << "    using namespace keet::lang;\n";
+            os << "    using keet::String;\n";
+            os << "    using keet::StringView;\n";
+            os << "    using keet::Vector;\n";
+            os << "    using keet::HashMap;\n\n";
+        } else {
+            os << "using namespace keet::lang;\n";
+            os << "using keet::String;\n";
+            os << "using keet::StringView;\n";
+            os << "using keet::Vector;\n";
+            os << "using keet::HashMap;\n\n";
         }
 
         // Struct definitions

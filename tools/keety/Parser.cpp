@@ -1040,6 +1040,14 @@ namespace Keety {
                 continue;
             }
 
+            // C++ native escape: cpp.<ident> -> ::<ident>
+            if ((_check(TokenKind::KwCpp) || (_check(TokenKind::Identifier) && _peek().text == "cpp")) && _peek(1).is(TokenKind::Dot)) {
+                _advance(); // consume 'cpp'
+                _advance(); // consume '.'
+                appendToken("::", true, false);
+                continue;
+            }
+
             // Member access: this.<ident> -> this-><ident>
             if (_check(TokenKind::KwThis)) {
                 _advance();
@@ -1099,6 +1107,16 @@ namespace Keety {
             }
             if (_check(TokenKind::RightBracket)) {
                 appendToken("]", false, true);
+                _advance();
+                continue;
+            }
+            if (_check(TokenKind::Dot)) {
+                appendToken(".", false, false);
+                _advance();
+                continue;
+            }
+            if (_check(TokenKind::Colon) && _peek().text == "::") {
+                appendToken("::", false, false);
                 _advance();
                 continue;
             }
