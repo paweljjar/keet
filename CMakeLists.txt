@@ -86,6 +86,7 @@ add_executable(keety_test_ast
         tools/keety/test_ast.cpp
         tools/keety/Lexer.cpp
         tools/keety/Parser.cpp
+        tools/keety/Codegen.cpp
 )
 target_include_directories(keety_test_ast PRIVATE tools/keety)
 add_test(NAME keety_test_ast COMMAND keety_test_ast)

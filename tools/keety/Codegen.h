@@ -34,6 +34,9 @@ namespace Keety {
             std::string _generateSource();
             std::string _generateAppMain();
 
+            std::string _generatePureModuleHeader();
+            std::string _generatePureModuleSource();
+
             std::string _mapType(const std::string& typeName) const;
             std::string _mapDbType(const std::string& typeName) const;
             void _collectInternedStrings(const TemplateNode& node);

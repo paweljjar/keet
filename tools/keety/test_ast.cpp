@@ -10,6 +10,7 @@
 #include "ASTPrinter.h"
 #include "Lexer.h"
 #include "Parser.h"
+#include "Codegen.h"
 
 int main() {
     using namespace Keety;
@@ -472,6 +473,47 @@ fn main(): void {
     assert(parsedStandDump.find("Struct: Point") != std::string::npos);
     std::cout << "Standalone KeetScript Parser verification passed! 🐱" << std::endl;
 
-    std::cout << "All Phase 1 & Phase 2 AST & Parser assertions passed successfully! 🐱" << std::endl;
+    // Test Codegen on standalone pure KeetScript module (Phase 3)
+    Codegen standCodegen(*parsedStand, "MathUtils.h");
+    GeneratedCode standGen = standCodegen.generate();
+
+    std::cout << "--- Generated Header ---\n" << standGen.headerCode << std::endl;
+    std::cout << "--- Generated Source ---\n" << standGen.sourceCode << std::endl;
+
+    // Header assertions
+    assert(standGen.headerCode.find("#pragma once") != std::string::npos);
+    assert(standGen.headerCode.find("namespace keet::io") != std::string::npos);
+    assert(standGen.headerCode.find("inline void print") != std::string::npos);
+    assert(standGen.headerCode.find("namespace MathUtils {") != std::string::npos);
+    assert(standGen.headerCode.find("class Foo {") != std::string::npos);
+    assert(standGen.headerCode.find("public:") != std::string::npos);
+    assert(standGen.headerCode.find("int c = {};") != std::string::npos);
+    assert(standGen.headerCode.find("Foo(int a, int b);") != std::string::npos);
+    assert(standGen.headerCode.find("private:") != std::string::npos);
+    assert(standGen.headerCode.find("int d = 4;") != std::string::npos);
+    assert(standGen.headerCode.find("int subtract();") != std::string::npos);
+    assert(standGen.headerCode.find("struct Point {") != std::string::npos);
+    assert(standGen.headerCode.find("int x = {};") != std::string::npos);
+    assert(standGen.headerCode.find("int y = 0;") != std::string::npos);
+    assert(standGen.headerCode.find("int add(int a, int b);") != std::string::npos);
+    assert(standGen.headerCode.find("using namespace MathUtils;") != std::string::npos);
+
+    // Source assertions
+    assert(standGen.sourceCode.find("#include \"MathUtils.h\"") != std::string::npos);
+    assert(standGen.sourceCode.find("Foo::Foo(int a, int b) {") != std::string::npos);
+    assert(standGen.sourceCode.find("this->c = a + b;") != std::string::npos);
+    assert(standGen.sourceCode.find("keet::io::print(subtract());") != std::string::npos);
+    assert(standGen.sourceCode.find("int Foo::subtract() {") != std::string::npos);
+    assert(standGen.sourceCode.find("return this->c - this->d;") != std::string::npos);
+    assert(standGen.sourceCode.find("int add(int a, int b) {") != std::string::npos);
+    assert(standGen.sourceCode.find("return a + b;") != std::string::npos);
+    assert(standGen.sourceCode.find("int main(int argc, char** argv) {") != std::string::npos);
+    assert(standGen.sourceCode.find("int c = add(4, 5);") != std::string::npos);
+    assert(standGen.sourceCode.find("keet::io::print(\"Hello, World! 4 + 5 =\", c);") != std::string::npos);
+    assert(standGen.sourceCode.find("return 0;") != std::string::npos);
+
+    std::cout << "Standalone KeetScript C++20 Codegen verification passed! 🐱" << std::endl;
+
+    std::cout << "All Phase 1, Phase 2, & Phase 3 AST, Parser & Codegen assertions passed successfully! 🐱" << std::endl;
     return 0;
 }

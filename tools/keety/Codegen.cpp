@@ -17,6 +17,7 @@ namespace Keety {
         if (typeName == "bool") return "bool";
         if (typeName == "void") return "void";
         if (typeName.empty()) return "void";
+        if (typeName.rfind("vector<", 0) == 0) return "std::" + typeName;
         return typeName;
     }
 
@@ -72,6 +73,13 @@ namespace Keety {
     GeneratedCode Codegen::generate() {
         if (_headerFileName.empty()) {
             _headerFileName = _ast.componentName + ".h";
+        }
+
+        if (_ast.isPureModule && _ast.moduleBlock) {
+            GeneratedCode result;
+            result.headerCode = _generatePureModuleHeader();
+            result.sourceCode = _generatePureModuleSource();
+            return result;
         }
 
         // Collect interned tags and props from template
@@ -603,6 +611,252 @@ namespace Keety {
         os << "    std::cout << \"[KeetApp] Application exited cleanly \U0001F431\" << std::endl;\n";
         os << "    return 0;\n";
         os << "}\n";
+
+        return os.str();
+    }
+
+    std::string Codegen::_generatePureModuleHeader() {
+        const auto& mod = *_ast.moduleBlock;
+        std::ostringstream os;
+
+        std::string modLabel = !mod.moduleName.empty() ? mod.moduleName : _ast.componentName;
+        os << "//\n// Automatically generated ahead-of-time by keety 🐱\n";
+        os << "// Standalone KeetScript Module: " << modLabel << "\n//\n\n";
+
+        os << "#pragma once\n\n";
+        os << "#include <iostream>\n";
+        os << "#include <string>\n";
+        os << "#include <vector>\n";
+        os << "#include <memory>\n";
+        os << "#include <utility>\n\n";
+
+        // Emit native C++ bridge imports
+        for (const auto& imp : mod.imports) {
+            if (!imp->headerPath.empty()) {
+                if (imp->headerPath.front() == '<' || imp->headerPath.front() == '"') {
+                    os << "#include " << imp->headerPath << "\n";
+                } else if (imp->headerPath.find('.') == std::string::npos) {
+                    os << "#include <" << imp->headerPath << ">\n";
+                } else {
+                    os << "#include \"" << imp->headerPath << "\"\n";
+                }
+            }
+        }
+        os << "\n";
+
+        // Inline keet::io::print stream formatting helper
+        os << "#ifndef KEET_IO_PRINT_DEFINED\n";
+        os << "#define KEET_IO_PRINT_DEFINED\n";
+        os << "namespace keet::io {\n";
+        os << "    template <typename... Args>\n";
+        os << "    inline void print(Args&&... args) {\n";
+        os << "        bool first = true;\n";
+        os << "        auto printOne = [&](const auto& val) {\n";
+        os << "            if (!first) std::cout << \" \";\n";
+        os << "            std::cout << val;\n";
+        os << "            first = false;\n";
+        os << "        };\n";
+        os << "        (printOne(std::forward<Args>(args)), ...);\n";
+        os << "        std::cout << \"\\n\";\n";
+        os << "    }\n";
+        os << "} // namespace keet::io\n";
+        os << "#endif\n\n";
+
+        bool hasNamespace = !mod.moduleName.empty();
+        if (hasNamespace) {
+            os << "namespace " << mod.moduleName << " {\n\n";
+        }
+
+        // Struct definitions
+        for (const auto& st : mod.structs) {
+            os << "    struct " << st->name << " {\n";
+            for (const auto& fld : st->fields) {
+                os << "        " << _mapType(fld->typeName) << " " << fld->name;
+                if (!fld->defaultValueExpr.empty()) {
+                    os << " = " << fld->defaultValueExpr;
+                } else {
+                    os << " = {}";
+                }
+                os << ";\n";
+            }
+            os << "    };\n\n";
+        }
+
+        // Class declarations with separated public, protected, private sections
+        for (const auto& cls : mod.classes) {
+            os << "    class " << cls->name << " {\n";
+
+            std::vector<std::shared_ptr<ClassFieldDecl>> pubFields, protFields, privFields;
+            for (const auto& fld : cls->fields) {
+                if (fld->visibility == Visibility::Public) pubFields.push_back(fld);
+                else if (fld->visibility == Visibility::Protected) protFields.push_back(fld);
+                else privFields.push_back(fld);
+            }
+
+            std::vector<std::shared_ptr<ClassMethodDecl>> pubMethods, protMethods, privMethods;
+            for (const auto& mtd : cls->methods) {
+                if (mtd->visibility == Visibility::Public) pubMethods.push_back(mtd);
+                else if (mtd->visibility == Visibility::Protected) protMethods.push_back(mtd);
+                else privMethods.push_back(mtd);
+            }
+
+            // Public section
+            os << "        public:\n";
+            for (const auto& fld : pubFields) {
+                os << "            " << _mapType(fld->typeName) << " " << fld->name;
+                if (!fld->defaultValueExpr.empty()) os << " = " << fld->defaultValueExpr;
+                else os << " = {}";
+                os << ";\n";
+            }
+            for (const auto& ctor : cls->constructors) {
+                os << "            " << ctor->name << "(";
+                for (size_t i = 0; i < ctor->parameters.size(); ++i) {
+                    if (i > 0) os << ", ";
+                    os << _mapType(ctor->parameters[i].typeName) << " " << ctor->parameters[i].name;
+                }
+                os << ");\n";
+            }
+            for (const auto& mtd : pubMethods) {
+                os << "            " << _mapType(mtd->returnType) << " " << mtd->name << "(";
+                for (size_t i = 0; i < mtd->parameters.size(); ++i) {
+                    if (i > 0) os << ", ";
+                    os << _mapType(mtd->parameters[i].typeName) << " " << mtd->parameters[i].name;
+                }
+                os << ");\n";
+            }
+
+            // Protected section
+            if (!protFields.empty() || !protMethods.empty()) {
+                os << "\n        protected:\n";
+                for (const auto& fld : protFields) {
+                    os << "            " << _mapType(fld->typeName) << " " << fld->name;
+                    if (!fld->defaultValueExpr.empty()) os << " = " << fld->defaultValueExpr;
+                    else os << " = {}";
+                    os << ";\n";
+                }
+                for (const auto& mtd : protMethods) {
+                    os << "            " << _mapType(mtd->returnType) << " " << mtd->name << "(";
+                    for (size_t i = 0; i < mtd->parameters.size(); ++i) {
+                        if (i > 0) os << ", ";
+                        os << _mapType(mtd->parameters[i].typeName) << " " << mtd->parameters[i].name;
+                    }
+                    os << ");\n";
+                }
+            }
+
+            // Private section
+            if (!privFields.empty() || !privMethods.empty()) {
+                os << "\n        private:\n";
+                for (const auto& fld : privFields) {
+                    os << "            " << _mapType(fld->typeName) << " " << fld->name;
+                    if (!fld->defaultValueExpr.empty()) os << " = " << fld->defaultValueExpr;
+                    else os << " = {}";
+                    os << ";\n";
+                }
+                for (const auto& mtd : privMethods) {
+                    os << "            " << _mapType(mtd->returnType) << " " << mtd->name << "(";
+                    for (size_t i = 0; i < mtd->parameters.size(); ++i) {
+                        if (i > 0) os << ", ";
+                        os << _mapType(mtd->parameters[i].typeName) << " " << mtd->parameters[i].name;
+                    }
+                    os << ");\n";
+                }
+            }
+
+            os << "    };\n\n";
+        }
+
+        // Standalone function prototypes
+        for (const auto& fn : mod.functions) {
+            if (fn->isMain) continue;
+            os << "    " << _mapType(fn->returnType) << " " << fn->name << "(";
+            for (size_t i = 0; i < fn->parameters.size(); ++i) {
+                if (i > 0) os << ", ";
+                os << _mapType(fn->parameters[i].typeName) << " " << fn->parameters[i].name;
+            }
+            os << ");\n";
+        }
+
+        if (hasNamespace) {
+            os << "\n} // namespace " << mod.moduleName << "\n\n";
+            os << "using namespace " << mod.moduleName << ";\n";
+        }
+
+        return os.str();
+    }
+
+    std::string Codegen::_generatePureModuleSource() {
+        const auto& mod = *_ast.moduleBlock;
+        std::ostringstream os;
+
+        os << "//\n// Automatically generated ahead-of-time by keety 🐱\n";
+        os << "// Standalone KeetScript Implementation\n//\n\n";
+
+        os << "#include \"" << _headerFileName << "\"\n";
+        os << "#include <iostream>\n\n";
+
+        bool hasNamespace = !mod.moduleName.empty();
+        if (hasNamespace) {
+            os << "namespace " << mod.moduleName << " {\n\n";
+        }
+
+        // 1. Class Constructors
+        for (const auto& cls : mod.classes) {
+            for (const auto& ctor : cls->constructors) {
+                os << "    " << cls->name << "::" << ctor->name << "(";
+                for (size_t i = 0; i < ctor->parameters.size(); ++i) {
+                    if (i > 0) os << ", ";
+                    os << _mapType(ctor->parameters[i].typeName) << " " << ctor->parameters[i].name;
+                }
+                os << ") {\n";
+                os << "        " << ctor->body << "\n";
+                os << "    }\n\n";
+            }
+
+            // 2. Class Methods
+            for (const auto& mtd : cls->methods) {
+                os << "    " << _mapType(mtd->returnType) << " " << cls->name << "::" << mtd->name << "(";
+                for (size_t i = 0; i < mtd->parameters.size(); ++i) {
+                    if (i > 0) os << ", ";
+                    os << _mapType(mtd->parameters[i].typeName) << " " << mtd->parameters[i].name;
+                }
+                os << ") {\n";
+                os << "        " << mtd->body << "\n";
+                os << "    }\n\n";
+            }
+        }
+
+        // 3. Standalone Functions (excluding main)
+        for (const auto& fn : mod.functions) {
+            if (fn->isMain) continue;
+            os << "    " << _mapType(fn->returnType) << " " << fn->name << "(";
+            for (size_t i = 0; i < fn->parameters.size(); ++i) {
+                if (i > 0) os << ", ";
+                os << _mapType(fn->parameters[i].typeName) << " " << fn->parameters[i].name;
+            }
+            os << ") {\n";
+            os << "        " << fn->body << "\n";
+            os << "    }\n\n";
+        }
+
+        if (hasNamespace) {
+            os << "} // namespace " << mod.moduleName << "\n\n";
+            os << "using namespace " << mod.moduleName << ";\n\n";
+        }
+
+        // 4. Executable Entry Point (fn main)
+        for (const auto& fn : mod.functions) {
+            if (fn->isMain) {
+                os << "int main(int argc, char** argv) {\n";
+                os << "    (void)argc;\n";
+                os << "    (void)argv;\n";
+                os << "    " << fn->body << "\n";
+                if (fn->body.find("return ") == std::string::npos) {
+                    os << "    return 0;\n";
+                }
+                os << "}\n";
+            }
+        }
 
         return os.str();
     }
