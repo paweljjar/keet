@@ -34,6 +34,8 @@ endif()
 add_library(keet_runtime STATIC
         src/runtime/IO.cpp
         src/runtime/Math.cpp
+        src/runtime/Memory.cpp
+        src/runtime/Collections.cpp
 )
 
 target_include_directories(keet_runtime PUBLIC
@@ -133,3 +135,9 @@ keet_add_test(keet_test_runtime_io tests/test_runtime_io.cpp)
 
 # libkeet Minimal Base Runtime - Math and Numeric Primitives unit test
 keet_add_test(keet_test_runtime_math tests/test_runtime_math.cpp)
+
+# libkeet Minimal Base Runtime - Memory Primitives unit test
+keet_add_test(keet_test_runtime_memory tests/test_runtime_memory.cpp)
+
+# libkeet Minimal Base Runtime - Collections unit test
+keet_add_test(keet_test_runtime_collections tests/test_runtime_collections.cpp)
