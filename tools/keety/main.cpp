@@ -130,6 +130,17 @@ int main(int argc, char* argv[]) {
         } else if (lintOnly) {
             std::cout << "keety: " << inputFile << ": Syntax & Safety OK [Cached: " << componentName << "] ⚡\n";
             return 0;
+        } else if (!outputSourceFile.empty() && !outputHeaderFile.empty() &&
+                   std::filesystem::exists(outputSourceFile) && std::filesystem::exists(outputHeaderFile)) {
+            try {
+                auto inTime = std::filesystem::last_write_time(inputFile);
+                auto srcTime = std::filesystem::last_write_time(outputSourceFile);
+                auto hdrTime = std::filesystem::last_write_time(outputHeaderFile);
+                if (srcTime >= inTime && hdrTime >= inTime) {
+                    std::cout << "keety: [cached] " << inputFile << " -> " << outputHeaderFile << " & " << outputSourceFile << " ⚡\n";
+                    return 0;
+                }
+            } catch (...) {}
         }
     }
 
@@ -158,8 +169,11 @@ int main(int argc, char* argv[]) {
         }
 
         // Step 2.5: Compile-Time Memory Safety (Borrow Checker)
-        Keety::BorrowChecker borrowChecker;
-        borrowChecker.checkOrThrow(*ast, source);
+        // Skip borrow-checking if cached and fresh
+        if (!incrementalMode || !cache.isFresh(inputFile)) {
+            Keety::BorrowChecker borrowChecker;
+            borrowChecker.checkOrThrow(*ast, source);
+        }
 
         // Step 2.6: K-IR Intermediate Representation
         Keety::KIRBuilder kirBuilder;

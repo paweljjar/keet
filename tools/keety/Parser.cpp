@@ -1411,6 +1411,8 @@ namespace Keety {
 
                 if (ann.isReference()) {
                     appendToken("const " + base + "& " + varName, true, true);
+                } else if (varType == "auto" && _check(TokenKind::Assign) && _cursor + 1 < _tokens.size() && _tokens[_cursor + 1].is(TokenKind::Ampersand)) {
+                    appendToken("const auto& " + varName, true, true);
                 } else {
                     appendToken("const " + base + " " + varName, true, true);
                 }
@@ -1442,6 +1444,16 @@ namespace Keety {
                     appendToken(base + "& " + varName, true, true);
                 } else if (ann.isImmutableRef()) {
                     appendToken("const " + base + "& " + varName, true, true);
+                } else if (varType == "auto" && _check(TokenKind::Assign) && _cursor + 1 < _tokens.size()) {
+                    if (_tokens[_cursor + 1].is(TokenKind::Ampersand)) {
+                        if (_cursor + 2 < _tokens.size() && _tokens[_cursor + 2].is(TokenKind::KwMut)) {
+                            appendToken("auto& " + varName, true, true);
+                        } else {
+                            appendToken("const auto& " + varName, true, true);
+                        }
+                    } else {
+                        appendToken("auto " + varName, true, true);
+                    }
                 } else {
                     appendToken(base + " " + varName, true, true);
                 }
@@ -1453,13 +1465,24 @@ namespace Keety {
                 _advance(); // consume 'move'
                 appendToken("std::move(", true, false);
                 int mDepth = 0;
+                bool firstTok = true;
                 while (!_isAtEnd()) {
                     if (mDepth == 0 && (_check(TokenKind::Semicolon) || _check(TokenKind::Comma) || _check(TokenKind::RightParen) || _check(TokenKind::RightBracket) || _check(TokenKind::RightBrace))) {
                         break;
                     }
                     if (_check(TokenKind::LeftParen) || _check(TokenKind::LeftBracket) || _check(TokenKind::LeftBrace)) mDepth++;
                     else if (_check(TokenKind::RightParen) || _check(TokenKind::RightBracket) || _check(TokenKind::RightBrace)) mDepth--;
-                    appendToken(_advance().text, true, true);
+                    Token mTok = _advance();
+                    if (mTok.is(TokenKind::Dot)) {
+                        appendToken(mTok.text, false, false);
+                    } else if (mTok.is(TokenKind::LeftParen) || mTok.is(TokenKind::LeftBracket)) {
+                        appendToken(mTok.text, false, false);
+                    } else if (mTok.is(TokenKind::RightParen) || mTok.is(TokenKind::RightBracket)) {
+                        appendToken(mTok.text, false, false);
+                    } else {
+                        appendToken(mTok.text, !firstTok, false);
+                    }
+                    firstTok = false;
                 }
                 appendToken(")", false, true);
                 continue;

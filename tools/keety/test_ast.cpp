@@ -822,6 +822,66 @@ fn broken(b: &Buffer): void {
 
     std::cout << "Feature 9 Phase 4 (Incremental Dependency Graph & Disk Cache) verification passed! 🐱" << std::endl;
 
-    std::cout << "All Phase 1, Phase 2, Phase 3, & Phase 4 AST, Parser, Codegen & Pipeline assertions passed successfully! 🐱" << std::endl;
+    // =========================================================================
+    // Feature 9: Phase 5 - C++20 Code Generation from Validated AST / K-IR
+    // =========================================================================
+    std::string phase5Source = R"(
+module Phase5Codegen;
+
+export struct DataPacket {
+    id: int,
+    payload: string
+}
+
+fn processPacket(move packet: DataPacket): string {
+    return move packet.payload;
+}
+
+fn inspectPacket(packet: &DataPacket): int {
+    return packet.id;
+}
+
+fn mutatePacket(packet: &mut DataPacket, newId: int): void {
+    packet.id = newId;
+}
+
+fn main(): void {
+    let mut pkt = DataPacket { id: 1, payload: "Hello" };
+    {
+        let r = &pkt;
+    }
+    {
+        let rmut = &mut pkt;
+    }
+    let movedPkt = move pkt;
+}
+)";
+
+    Lexer p5Lexer(phase5Source, "Phase5Codegen.keet");
+    auto p5Tokens = p5Lexer.tokenize();
+    Parser p5Parser(p5Tokens, "Phase5Codegen");
+    auto p5Ast = p5Parser.parse();
+
+    BorrowChecker p5Checker;
+    bool p5SafetyOk = p5Checker.check(*p5Ast, phase5Source);
+    assert(p5SafetyOk);
+
+    Codegen p5Codegen(*p5Ast, "Phase5Codegen.h");
+    GeneratedCode p5Gen = p5Codegen.generate();
+
+    // Verify 5.1 & 5.2 Header declarations (reference mappings & value ownership)
+    assert(p5Gen.headerCode.find("std::string processPacket(DataPacket packet);") != std::string::npos);
+    assert(p5Gen.headerCode.find("int inspectPacket(const DataPacket& packet);") != std::string::npos);
+    assert(p5Gen.headerCode.find("void mutatePacket(DataPacket& packet, int newId);") != std::string::npos);
+
+    // Verify 5.1 & 5.2 Source implementation (move semantics & auto reference bindings)
+    assert(p5Gen.sourceCode.find("std::move(packet.payload)") != std::string::npos);
+    assert(p5Gen.sourceCode.find("const auto& r = pkt;") != std::string::npos);
+    assert(p5Gen.sourceCode.find("auto& rmut = pkt;") != std::string::npos);
+    assert(p5Gen.sourceCode.find("auto movedPkt = std::move(pkt);") != std::string::npos);
+
+    std::cout << "Feature 9 Phase 5 (C++20 Code Generation from Validated Pipeline) verification passed! 🐱" << std::endl;
+
+    std::cout << "All Phase 1, Phase 2, Phase 3, Phase 4, & Phase 5 AST, Parser, Codegen & Pipeline assertions passed successfully! 🐱" << std::endl;
     return 0;
 }
