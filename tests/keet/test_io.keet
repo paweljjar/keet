@@ -1,0 +1,28 @@
+module TestIO;
+
+fn main(): void {
+    io.println("Running KeetScript IO Tests...");
+
+    // 1. Basic print and println
+    io.print("Test print: ", 42);
+    io.println();
+    io.println("Test println line");
+
+    // 2. Direct stdout write
+    io.stdout.write("Direct stdout write OK\n");
+
+    // 3. io.Buffer operations
+    let sample: string = "KeetScript IO Buffer Test";
+    let buf: io.Buffer = io.Buffer(sample.data(), sample.size());
+
+    assert(!buf.empty());
+    assertEq(buf.size(), sample.size());
+    assertEq(buf.toString(), sample);
+
+    // Slice
+    let sub: io.Buffer = buf.slice(0, 10);
+    assertEq(sub.toString(), "KeetScript");
+    assertEq(sub.size(), 10);
+
+    io.println("KeetScript IO Tests Passed! 🐱");
+}

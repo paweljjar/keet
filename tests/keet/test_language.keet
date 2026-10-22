@@ -1,0 +1,73 @@
+module TestLanguage;
+
+export const APP_NAME: string = "Keet Ecosystem";
+export const PI: float = 3.14159;
+
+export struct UserProfile {
+    id: int,
+    username: string,
+    isActive: bool = true
+}
+
+fn main(): void {
+    io.println("Running KeetScript Language Tests...");
+
+    // 1. Mutability & Constants (let vs. const)
+    const appTitle: string = APP_NAME;
+    assertEq(appTitle, "Keet Ecosystem");
+    assert(PI > 3.14);
+
+    let counter: int = 10;
+    counter = counter + 5;
+    assertEq(counter, 15);
+
+    // 2. Conditionals (if / else if / else)
+    let score: int = 85;
+    let grade: string = "";
+    if score >= 90 {
+        grade = "A";
+    } else if score >= 80 {
+        grade = "B";
+    } else {
+        grade = "C";
+    }
+    assertEq(grade, "B");
+
+    // 3. Ternary operator (? :)
+    let isPremium: bool = true;
+    let badge: string = isPremium ? "Gold Member" : "Standard";
+    assertEq(badge, "Gold Member");
+
+    // 4. Loops (for x in collection)
+    let fruits: array<string> = ["Apple", "Banana", "Cherry"];
+    let fruitList: string = "";
+    for fruit in fruits {
+        if (fruitList.size() > 0) {
+            fruitList = fruitList + ", ";
+        }
+        fruitList = fruitList + fruit;
+    }
+    assertEq(fruitList, "Apple, Banana, Cherry");
+
+    // 5. Arrow functions
+    let doubleVal = (x: int) => x * 2;
+    let add = (a: int, b: int) => a + b;
+    assertEq(doubleVal(21), 42);
+    assertEq(add(15, 27), 42);
+
+    let blockArrow = (val: int) => {
+        return val + 100;
+    };
+    assertEq(blockArrow(25), 125);
+
+    // 6. Declarative struct and object literal instantiation
+    let profile = UserProfile {
+        id: 42,
+        username: "Pawel"
+    };
+    assertEq(profile.id, 42);
+    assertEq(profile.username, "Pawel");
+    assert(profile.isActive);
+
+    io.println("KeetScript Language Tests Passed! 🐱");
+}

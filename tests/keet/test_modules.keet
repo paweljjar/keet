@@ -1,0 +1,26 @@
+module TestModules;
+
+fn computeAnswer(base: int): int {
+    return base * 2;
+}
+
+export struct ModuleItem {
+    id: int,
+    name: string
+}
+
+fn main(): void {
+    io.println("Running KeetScript Modules Tests...");
+
+    let ans: int = computeAnswer(21);
+    assertEq(ans, 42);
+
+    let item = ModuleItem {
+        id: 7,
+        name: "TestItem"
+    };
+    assertEq(item.id, 7);
+    assertEq(item.name, "TestItem");
+
+    io.println("KeetScript Modules Tests Passed! 🐱");
+}

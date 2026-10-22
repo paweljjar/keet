@@ -1,0 +1,30 @@
+module TestMath;
+
+fn main(): void {
+    io.println("Running KeetScript Math Tests...");
+
+    // 1. Bitwise operations
+    assertEq(math.popcount(math.u32(0)), 0);
+    assertEq(math.popcount(math.u32(27)), 4);
+    assertEq(math.popcount(math.u32(255)), 8);
+
+    assertEq(math.countLeadingZeros(math.u32(0x80000000)), 0);
+    assertEq(math.countTrailingZeros(math.u32(8)), 3);
+
+    // 2. Scalars
+    assertEq(math.clamp(5, 0, 10), 5);
+    assertEq(math.clamp(-5, 0, 10), 0);
+    assertEq(math.clamp(15, 0, 10), 10);
+
+    assertEq(math.sign(-42), -1);
+    assertEq(math.sign(0), 0);
+    assertEq(math.sign(99), 1);
+    assertEq(math.abs(-15), 15);
+
+    // 3. Constants
+    assert(math.isClose(math.PI, 3.14159265, 0.0001));
+    assert(math.isClose(math.degToRad(180.0), math.PI, 0.0001));
+    assert(math.isClose(math.radToDeg(math.PI), 180.0, 0.0001));
+
+    io.println("KeetScript Math Tests Passed! 🐱");
+}

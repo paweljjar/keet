@@ -30,7 +30,23 @@ if(ENABLE_TSAN)
     add_link_options(-fsanitize=thread)
 endif()
 
-# Define the static library target
+# Define the minimal base runtime library target (Feature 8)
+add_library(keet_runtime STATIC
+        src/runtime/IO.cpp
+        src/runtime/File.cpp
+        src/runtime/Math.cpp
+        src/runtime/Memory.cpp
+        src/runtime/Collections.cpp
+)
+
+target_include_directories(keet_runtime PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+
+target_compile_features(keet_runtime PUBLIC cxx_std_20)
+
+# Define the full static library target
 add_library(keet STATIC
         src/Server.cpp
         src/Middleware.cpp
@@ -55,6 +71,7 @@ target_compile_definitions(keet PRIVATE
 )
 
 target_link_libraries(keet PUBLIC
+        keet_runtime
         Threads::Threads
         ${CMAKE_DL_LIBS}
 )
@@ -81,7 +98,7 @@ include(cmake/KeetTesting.cmake)
 # Enable CTest integration
 enable_testing()
 
-# Keety AST unit test executable
+# Core Keety AST compiler test executable
 add_executable(keety_test_ast
         tools/keety/test_ast.cpp
         tools/keety/Lexer.cpp
@@ -91,25 +108,102 @@ add_executable(keety_test_ast
 target_include_directories(keety_test_ast PRIVATE tools/keety)
 add_test(NAME keety_test_ast COMMAND keety_test_ast)
 
+# =============================================================================
+# C++ Test Suite (tests/cpp)
+# =============================================================================
+
 # Core Testing framework unit test executable
-keet_add_test(keet_test_framework tests/test_framework.cpp)
+keet_add_test(test_cpp_framework tests/cpp/test_framework.cpp)
 
 # Headless VDOM Test Harness unit test executable
-keet_add_test(keet_test_vdom_harness tests/test_vdom_harness.cpp)
+keet_add_test(test_cpp_vdom tests/cpp/test_vdom.cpp)
 
 # Event Dispatcher & Bubbling unit test executable
-keet_add_test(keet_test_event_dispatcher tests/test_event_dispatcher.cpp)
+keet_add_test(test_cpp_events tests/cpp/test_events.cpp)
 
 # Mock Session & Snapshot Testing unit test executable
-keet_add_test(keet_test_snapshots_and_session tests/test_snapshots_and_session.cpp)
+keet_add_test(test_cpp_snapshots tests/cpp/test_snapshots.cpp)
 
 # Embedded SQLite Database Engine & KeetScript Component unit test executable
-keet_add_test(keet_test_database tests/test_database.cpp tests/DatabaseTest.keet)
+keet_add_test(test_cpp_database tests/cpp/test_database.cpp tests/keet/DatabaseTest.keet)
 
 # Standalone KeetScript Library & Module test executable
-keet_add_library(standalone_keet_lib tests/StandaloneModule.keet)
-keet_add_test(keet_test_standalone_keetscript tests/test_standalone_keetscript.cpp LIBRARIES standalone_keet_lib)
+keet_add_library(standalone_keet_lib tests/keet/StandaloneModule.keet)
+keet_add_test(test_cpp_modules tests/cpp/test_modules.cpp LIBRARIES standalone_keet_lib)
 
-# Standalone KeetScript Native Executable test
-keet_add_executable(keet_test_standalone_app tests/StandaloneApp.keet)
-add_test(NAME keet_test_standalone_app COMMAND keet_test_standalone_app)
+# libkeet Minimal Base Runtime - I/O Streams and Formatting unit test
+keet_add_test(test_cpp_io tests/cpp/test_io.cpp)
+
+# libkeet Minimal Base Runtime - File Primitives & Filesystem unit test
+keet_add_test(test_cpp_file tests/cpp/test_file.cpp)
+
+# libkeet Minimal Base Runtime - Math and Numeric Primitives unit test
+keet_add_test(test_cpp_math tests/cpp/test_math.cpp)
+
+# libkeet Minimal Base Runtime - Memory Primitives unit test
+keet_add_test(test_cpp_memory tests/cpp/test_memory.cpp)
+
+# libkeet Minimal Base Runtime - Collections unit test
+keet_add_test(test_cpp_collections tests/cpp/test_collections.cpp)
+
+# KeetScript Language Features C++ unit test (let/const, ternary, loops, arrow functions, structs)
+keet_add_test(test_cpp_language tests/cpp/test_language.cpp)
+
+# KeetScript Errors and Zonk Operator C++ unit test
+keet_add_test(test_cpp_errors tests/cpp/test_errors.cpp)
+
+# =============================================================================
+# KeetScript Test Suite (tests/keet)
+# =============================================================================
+
+# KeetScript native test: Testing framework
+keet_add_executable(test_keet_framework tests/keet/test_framework.keet)
+add_test(NAME test_keet_framework COMMAND test_keet_framework)
+
+# KeetScript native test: VDOM and elements
+keet_add_executable(test_keet_vdom tests/keet/test_vdom.keet LIBRARIES keet)
+add_test(NAME test_keet_vdom COMMAND test_keet_vdom)
+
+# KeetScript native test: Event dispatcher and handlers
+keet_add_executable(test_keet_events tests/keet/test_events.keet LIBRARIES keet)
+add_test(NAME test_keet_events COMMAND test_keet_events)
+
+# KeetScript native test: Snapshots and VDOM formatting
+keet_add_executable(test_keet_snapshots tests/keet/test_snapshots.keet LIBRARIES keet)
+add_test(NAME test_keet_snapshots COMMAND test_keet_snapshots)
+
+# KeetScript native test: Embedded SQLite database engine
+keet_add_executable(test_keet_database tests/keet/test_database.keet LIBRARIES keet)
+add_test(NAME test_keet_database COMMAND test_keet_database)
+
+# KeetScript native test: Standalone modules and structs
+keet_add_executable(test_keet_modules tests/keet/test_modules.keet)
+add_test(NAME test_keet_modules COMMAND test_keet_modules)
+
+# KeetScript native test: I/O streams and formatting
+keet_add_executable(test_keet_io tests/keet/test_io.keet)
+add_test(NAME test_keet_io COMMAND test_keet_io)
+
+# KeetScript native test: File primitives and filesystem
+keet_add_executable(test_keet_file tests/keet/test_file.keet)
+add_test(NAME test_keet_file COMMAND test_keet_file)
+
+# KeetScript native test: Math primitives
+keet_add_executable(test_keet_math tests/keet/test_math.keet)
+add_test(NAME test_keet_math COMMAND test_keet_math)
+
+# KeetScript native test: Memory primitives
+keet_add_executable(test_keet_memory tests/keet/test_memory.keet)
+add_test(NAME test_keet_memory COMMAND test_keet_memory)
+
+# KeetScript native test: Collections (Vector, HashMap, Set)
+keet_add_executable(test_keet_collections tests/keet/test_collections.keet)
+add_test(NAME test_keet_collections COMMAND test_keet_collections)
+
+# KeetScript native test: Language features (let/const, ternary, loops, arrow functions, structs)
+keet_add_executable(test_keet_language tests/keet/test_language.keet)
+add_test(NAME test_keet_language COMMAND test_keet_language)
+
+# KeetScript native test: Errors (errtype) and zonk error recovery operator
+keet_add_executable(test_keet_errors tests/keet/test_errors.keet)
+add_test(NAME test_keet_errors COMMAND test_keet_errors)

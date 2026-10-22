@@ -1,0 +1,45 @@
+module TestFile;
+
+import file;
+
+fn main(): void {
+    io.println("Running KeetScript File Tests...");
+
+    let testDir: string = "/tmp/keet_test_file_dir/nested";
+    let testPath: string = "/tmp/keet_test_file_dir/nested/sample.txt";
+
+    if (file.exists("/tmp/keet_test_file_dir")) {
+        file.remove("/tmp/keet_test_file_dir");
+    }
+
+    // 1. Directory creation
+    assert(file.createDir(testDir));
+    assert(file.exists(testDir));
+    assert(file.isDirectory(testDir));
+
+    // 2. Writing text and checking existence & size
+    assert(file.writeText(testPath, "KeetScript File Test Data\n"));
+    assert(file.exists(testPath));
+    assert(!file.isDirectory(testPath));
+    assert(file.size(testPath) > 0);
+
+    // 3. Reading text
+    let content: string = file.readText(testPath);
+    assertEq(content, "KeetScript File Test Data\n");
+
+    // 4. Listing directory
+    let entries: array<string> = file.listDir(testDir);
+    assertEq(entries.size(), 1);
+
+    // 5. Binary file operations
+    let binPath: string = "/tmp/keet_test_file_dir/nested/blob.bin";
+    file.writeText(binPath, "BINARY_DATA");
+    let bytes: vector<uint8_t> = file.readBytes(binPath);
+    assertEq(bytes.size(), 11);
+
+    // 6. Clean up
+    assert(file.remove("/tmp/keet_test_file_dir"));
+    assert(!file.exists("/tmp/keet_test_file_dir"));
+
+    io.println("KeetScript File Tests Passed! 🐱");
+}

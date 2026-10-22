@@ -17,7 +17,11 @@ namespace Keety {
         if (typeName == "bool") return "bool";
         if (typeName == "void") return "void";
         if (typeName.empty()) return "void";
+        if (typeName == "vector<string>" || typeName == "array<string>") return "std::vector<std::string>";
         if (typeName.rfind("vector<", 0) == 0) return "std::" + typeName;
+        if (typeName.rfind("array<", 0) == 0) return "std::vector<" + _mapType(typeName.substr(6, typeName.size() - 7)) + ">";
+        if (typeName == "io::Buffer" || typeName == "io.Buffer" || typeName == "Buffer") return "keet::io::BufferView";
+        if (typeName == "file::File" || typeName == "file.File" || typeName == "File") return "keet::file::File";
         return typeName;
     }
 
@@ -644,27 +648,47 @@ namespace Keety {
         }
         os << "\n";
 
-        // Inline keet::io::print stream formatting helper
-        os << "#ifndef KEET_IO_PRINT_DEFINED\n";
-        os << "#define KEET_IO_PRINT_DEFINED\n";
-        os << "namespace keet::io {\n";
-        os << "    template <typename... Args>\n";
-        os << "    inline void print(Args&&... args) {\n";
-        os << "        bool first = true;\n";
-        os << "        auto printOne = [&](const auto& val) {\n";
-        os << "            if (!first) std::cout << \" \";\n";
-        os << "            std::cout << val;\n";
-        os << "            first = false;\n";
-        os << "        };\n";
-        os << "        (printOne(std::forward<Args>(args)), ...);\n";
-        os << "        std::cout << \"\\n\";\n";
-        os << "    }\n";
-        os << "} // namespace keet::io\n";
-        os << "#endif\n\n";
+        // libkeet minimal base runtime headers
+        os << "#include <keet/runtime/IO.h>\n";
+        os << "#include <keet/runtime/File.h>\n";
+        os << "#include <keet/runtime/Math.h>\n";
+        os << "#include <keet/runtime/Memory.h>\n";
+        os << "#include <keet/runtime/Collections.h>\n";
+        os << "#include <keet/runtime/Lang.h>\n\n";
 
         bool hasNamespace = !mod.moduleName.empty();
         if (hasNamespace) {
             os << "namespace " << mod.moduleName << " {\n\n";
+            os << "    using namespace keet::lang;\n";
+            os << "    using keet::String;\n";
+            os << "    using keet::StringView;\n";
+            os << "    using keet::Vector;\n";
+            os << "    using keet::HashMap;\n";
+            os << "    using Buffer = keet::io::BufferView;\n";
+            os << "    using File = keet::file::File;\n";
+            os << "    template <typename T> using array = std::vector<T>;\n\n";
+        } else {
+            os << "using namespace keet::lang;\n";
+            os << "using keet::String;\n";
+            os << "using keet::StringView;\n";
+            os << "using keet::Vector;\n";
+            os << "using keet::HashMap;\n";
+            os << "using Buffer = keet::io::BufferView;\n";
+            os << "using File = keet::file::File;\n";
+            os << "template <typename T> using array = std::vector<T>;\n\n";
+        }
+
+        // Constants (const and export const)
+        for (const auto& cnst : mod.constants) {
+            std::string t = _mapType(cnst->typeName);
+            if (t == "auto") {
+                os << "    inline const auto " << cnst->name << " = " << cnst->valueExpr << ";\n";
+            } else {
+                os << "    inline const " << t << " " << cnst->name << " = " << cnst->valueExpr << ";\n";
+            }
+        }
+        if (!mod.constants.empty()) {
+            os << "\n";
         }
 
         // Struct definitions
@@ -680,6 +704,20 @@ namespace Keety {
                 os << ";\n";
             }
             os << "    };\n\n";
+        }
+
+        // Error Type Enum declarations (errtype)
+        for (const auto& et : mod.errtypes) {
+            os << "    enum class " << et->name << " : int {\n";
+            for (const auto& fld : et->fields) {
+                os << "        " << fld.name;
+                if (fld.hasCode) {
+                    os << " = " << fld.code;
+                }
+                os << ",\n";
+            }
+            os << "    };\n\n";
+            os << "    inline int getErrorCode(" << et->name << " err) { return static_cast<int>(err); }\n\n";
         }
 
         // Class declarations with separated public, protected, private sections

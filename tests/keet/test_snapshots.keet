@@ -1,0 +1,34 @@
+module TestSnapshots;
+
+import cpp from "keet/UIEngine.h" as UI;
+import cpp from "keet/TestHarness.h" as Harness;
+
+fn main(): void {
+    io.println("Running KeetScript Snapshots Tests...");
+
+    // 1. Construct VDOM hierarchy
+    let titleNode = cpp.UIEngine::VNode::el("h1", {{"class", "title"}}, {
+        cpp.UIEngine::VNode::textNode("Snapshot Header")
+    });
+    let cardNode = cpp.UIEngine::VNode::el("div", {
+        {"id", "snapshot-card"},
+        {"class", "card active"}
+    }, {
+        titleNode,
+        cpp.UIEngine::VNode::el("p", {{"class", "desc"}}, {
+            cpp.UIEngine::VNode::textNode("System is ready")
+        })
+    });
+
+    // 2. Format VDOM with Snapshot formatter
+    let formatted = cpp.keet::Testing::Snapshot::formatVNode(cardNode);
+    assert(formatted.find("<div") != std::string::npos);
+    assert(formatted.find("Snapshot Header") != std::string::npos);
+    assert(formatted.find("System is ready") != std::string::npos);
+
+    // 3. Verify deterministic formatting
+    let formattedAgain = cpp.keet::Testing::Snapshot::formatVNode(cardNode);
+    assertEq(formatted, formattedAgain);
+
+    io.println("KeetScript Snapshots Tests Passed! 🐱");
+}

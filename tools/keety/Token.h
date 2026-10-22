@@ -50,6 +50,7 @@ namespace Keety {
         Semicolon, // ;
         Comma, // ,
         Dot, // .
+        Question, // ?
         Arrow, // ->
         FatArrow, // =>
         Assign, // =
@@ -63,6 +64,7 @@ namespace Keety {
         KwAs, // as
         KwState, // state
         KwLet, // let
+        KwConst, // const
         KwDef, // def
         KwReturn, // return
         KwIf, // if
@@ -97,6 +99,8 @@ namespace Keety {
         KwModule, // module
         KwThis, // this
         KwPrint, // print
+        KwErrtype, // errtype
+        KwZonk, // zonk
 
         // Literals and identifiers
         Identifier, // Alphanumeric identifier (e.g., count, onClick, title)
@@ -167,6 +171,7 @@ namespace Keety {
                 case TokenKind::Semicolon: return ";";
                 case TokenKind::Comma: return ",";
                 case TokenKind::Dot: return ".";
+                case TokenKind::Question: return "?";
                 case TokenKind::Arrow: return "->";
                 case TokenKind::FatArrow: return "=>";
                 case TokenKind::Assign: return "=";
@@ -178,6 +183,7 @@ namespace Keety {
                 case TokenKind::KwAs: return "as";
                 case TokenKind::KwState: return "state";
                 case TokenKind::KwLet: return "let";
+                case TokenKind::KwConst: return "const";
                 case TokenKind::KwDef: return "def";
                 case TokenKind::KwReturn: return "return";
                 case TokenKind::KwIf: return "if";
@@ -208,6 +214,8 @@ namespace Keety {
                 case TokenKind::KwModule: return "module";
                 case TokenKind::KwThis: return "this";
                 case TokenKind::KwPrint: return "print";
+                case TokenKind::KwErrtype: return "errtype";
+                case TokenKind::KwZonk: return "zonk";
                 case TokenKind::Identifier: return "identifier";
                 case TokenKind::StringLiteral: return "string literal";
                 case TokenKind::NumberLiteral: return "number literal";

@@ -1,0 +1,46 @@
+module TestEvents;
+
+import cpp from "keet/UIEngine.h" as UI;
+
+fn main(): void {
+    io.println("Running KeetScript Event Dispatcher Tests...");
+
+    // 1. Create and test Event object properties
+    let ev = cpp.UIEngine::Event{};
+    ev.type = "click";
+    ev.clientX = 150.5;
+    ev.clientY = 250.0;
+    ev.altKey = false;
+    ev.ctrlKey = true;
+
+    assertEq(ev.type, "click");
+    assertEq(ev.clientX, 150.5);
+    assertEq(ev.clientY, 250.0);
+    assert(!ev.altKey);
+    assert(ev.ctrlKey);
+
+    // 2. Form submission event map
+    let formEv = cpp.UIEngine::Event{};
+    formEv.type = "submit";
+    formEv.form["username"] = "keet_dev";
+    formEv.form["email"] = "dev@keet.cat";
+
+    assertEq(formEv.type, "submit");
+    assertEq(formEv.form["username"], "keet_dev");
+    assertEq(formEv.form["email"], "dev@keet.cat");
+
+    // 3. Event handler callback triggering using KeetScript arrow function
+    let wasClicked: bool = false;
+    let clickedVal: string = "";
+
+    let clickHandler = (e: cpp.UIEngine::Event) => {
+        wasClicked = true;
+        clickedVal = e.type;
+    };
+
+    clickHandler(ev);
+    assert(wasClicked);
+    assertEq(clickedVal, "click");
+
+    io.println("KeetScript Event Dispatcher Tests Passed! 🐱");
+}

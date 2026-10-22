@@ -1,0 +1,30 @@
+module TestVDOM;
+
+import cpp from "keet/UIEngine.h" as UI;
+
+fn main(): void {
+    io.println("Running KeetScript VDOM Tests...");
+
+    // Create a VNode using UIEngine tags
+    let textNode = cpp.UIEngine::VNode::textNode("Hello VDOM");
+    assertEq(textNode.text, "Hello VDOM");
+    assertEq(textNode.tag, "#text");
+
+    let el = cpp.UIEngine::VNode::el("div", {
+        {"id", "main-card"},
+        {"class", "card active"}
+    }, {
+        cpp.UIEngine::VNode::textNode("Child Text")
+    });
+
+    assertEq(el.tag, "div");
+    assert(el.tag != "#text");
+    assertEq(el.children.size(), 1);
+    assertEq(el.props.at("id").asString(), "main-card");
+
+    // Convert to JSON
+    let jsonTree = el.toJson();
+    assertEq(jsonTree["tag"].asString(), "div");
+
+    io.println("KeetScript VDOM Tests Passed! 🐱");
+}
