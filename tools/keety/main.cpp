@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "AST.h"
+#include "BorrowChecker.h"
 #include "Codegen.h"
 #include "Diagnostic.h"
 #include "Lexer.h"
@@ -115,6 +116,10 @@ int main(int argc, char* argv[]) {
         if (libMode) {
             ast->isPureModule = true;
         }
+
+        // Step 2.5: Compile-Time Memory Safety (Borrow Checker)
+        Keety::BorrowChecker borrowChecker;
+        borrowChecker.checkOrThrow(*ast, source);
 
         if (lintOnly) {
             if (ast->isPureModule) {

@@ -297,6 +297,7 @@ namespace Keety {
         std::vector<ParameterDecl> parameters; // Formal parameter list
         std::string returnType = "void"; // Declared return type
         std::string body; // Raw or parsed statement body
+        std::vector<Token> bodyTokens; // Tokens within function body for borrow checker & K-IR pipeline
 
         explicit FunctionDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
 
@@ -481,6 +482,7 @@ namespace Keety {
         std::string name; // Class constructor identifier
         std::vector<ParameterDecl> parameters; // Formal parameters
         std::string body; // Constructor implementation statements
+        std::vector<Token> bodyTokens; // Tokens within constructor body
 
         explicit ConstructorDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
         void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
@@ -492,6 +494,7 @@ namespace Keety {
         Visibility visibility = Visibility::Public; // Access visibility
         std::vector<ParameterDecl> parameters; // Formal parameters
         std::string body; // Method implementation statements
+        std::vector<Token> bodyTokens; // Tokens within method body
 
         explicit ClassMethodDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
         void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
@@ -539,6 +542,7 @@ namespace Keety {
         bool isMain = false; // fn main(): void entry point
         std::vector<ParameterDecl> parameters; // Formal parameters
         std::string body; // Function implementation statements
+        std::vector<Token> bodyTokens; // Tokens within function body
 
         explicit StandaloneFunctionDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
         void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }

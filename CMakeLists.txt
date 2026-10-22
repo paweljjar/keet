@@ -88,6 +88,7 @@ add_executable(keety
         tools/keety/Lexer.cpp
         tools/keety/Parser.cpp
         tools/keety/Codegen.cpp
+        tools/keety/BorrowChecker.cpp
 )
 target_include_directories(keety PRIVATE tools/keety)
 
@@ -104,6 +105,7 @@ add_executable(keety_test_ast
         tools/keety/Lexer.cpp
         tools/keety/Parser.cpp
         tools/keety/Codegen.cpp
+        tools/keety/BorrowChecker.cpp
 )
 target_include_directories(keety_test_ast PRIVATE tools/keety)
 add_test(NAME keety_test_ast COMMAND keety_test_ast)
@@ -151,6 +153,15 @@ keet_add_test(test_cpp_language tests/cpp/test_language.cpp)
 
 # KeetScript Errors and Zonk Operator C++ unit test
 keet_add_test(test_cpp_errors tests/cpp/test_errors.cpp)
+
+# KeetScript Compile-Time Borrow Checker & Memory Safety C++ unit test
+keet_add_test(test_cpp_borrow_checker tests/cpp/test_borrow_checker.cpp
+        tools/keety/Lexer.cpp
+        tools/keety/Parser.cpp
+        tools/keety/Codegen.cpp
+        tools/keety/BorrowChecker.cpp
+)
+target_include_directories(test_cpp_borrow_checker PRIVATE tools/keety)
 
 # =============================================================================
 # KeetScript Test Suite (tests/keet)
@@ -207,3 +218,7 @@ add_test(NAME test_keet_language COMMAND test_keet_language)
 # KeetScript native test: Errors (errtype) and zonk error recovery operator
 keet_add_executable(test_keet_errors tests/keet/test_errors.keet)
 add_test(NAME test_keet_errors COMMAND test_keet_errors)
+
+# KeetScript native test: Compile-Time Memory Safety & Borrow Checker
+keet_add_executable(test_keet_borrow_checker tests/keet/test_borrow_checker.keet)
+add_test(NAME test_keet_borrow_checker COMMAND test_keet_borrow_checker)

@@ -47,6 +47,10 @@ namespace Keety {
         return "E0500";
     }
 
+    inline std::ostream& operator<<(std::ostream& os, ErrorCode code) {
+        return os << errorCodeToString(code);
+    }
+
     struct DiagnosticSpan {
         SourceLocation loc;
         size_t length = 1;

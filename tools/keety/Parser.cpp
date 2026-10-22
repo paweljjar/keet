@@ -504,24 +504,7 @@ namespace Keety {
             fn->returnType = _parseTypeName();
         }
 
-        _consume(TokenKind::LeftBrace, "Expected '{' before function body");
-        int braceDepth = 1;
-        std::string body;
-        while (!_isAtEnd() && braceDepth > 0) {
-            if (_check(TokenKind::LeftBrace)) braceDepth++;
-            else if (_check(TokenKind::RightBrace)) {
-                braceDepth--;
-                if (braceDepth == 0) break;
-            }
-            if (!body.empty()) body += " ";
-            if (_peek().is(TokenKind::StringLiteral)) {
-                body += "\"" + _advance().text + "\"";
-            } else {
-                body += _advance().text;
-            }
-        }
-        _consume(TokenKind::RightBrace, "Expected '}' closing function body");
-        fn->body = body;
+        fn->body = _parseStatementBody(&fn->bodyTokens);
         return fn;
     }
 
@@ -1009,7 +992,7 @@ namespace Keety {
                 }
                 _consume(TokenKind::RightParen, "Expected ')' closing constructor parameters");
 
-                ctor->body = _parseStatementBody();
+                ctor->body = _parseStatementBody(&ctor->bodyTokens);
                 classDecl->constructors.push_back(ctor);
                 continue;
             }
@@ -1044,7 +1027,7 @@ namespace Keety {
                     method->returnType = _parseTypeName();
                 }
 
-                method->body = _parseStatementBody();
+                method->body = _parseStatementBody(&method->bodyTokens);
                 classDecl->methods.push_back(method);
                 continue;
             }
@@ -1170,11 +1153,12 @@ namespace Keety {
             fn->returnType = _parseTypeName();
         }
 
-        fn->body = _parseStatementBody();
+        fn->body = _parseStatementBody(&fn->bodyTokens);
         return fn;
     }
 
-    std::string Parser::_parseStatementBody() {
+    std::string Parser::_parseStatementBody(std::vector<Token>* outTokens) {
+        size_t startTokenIdx = _cursor;
         _consume(TokenKind::LeftBrace, "Expected '{' to start body");
         int braceDepth = 1;
         std::ostringstream oss;
@@ -1592,6 +1576,10 @@ namespace Keety {
             } else {
                 appendToken(_advance().text, true, true);
             }
+        }
+
+        if (outTokens && startTokenIdx < _tokens.size() && _cursor <= _tokens.size()) {
+            outTokens->assign(_tokens.begin() + startTokenIdx, _tokens.begin() + _cursor);
         }
 
         return transformZonk(oss.str());

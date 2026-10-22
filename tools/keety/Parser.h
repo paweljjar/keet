@@ -101,7 +101,7 @@ namespace Keety {
             std::shared_ptr<ErrtypeDecl> _parseErrtype(bool isExported);
             std::shared_ptr<StandaloneFunctionDecl> _parseStandaloneFunction(bool isExported);
             std::string _parseTypeName();
-            std::string _parseStatementBody();
+            std::string _parseStatementBody(std::vector<Token>* outTokens = nullptr);
             static std::string transformZonk(std::string s);
 
             std::vector<Token> _tokens;

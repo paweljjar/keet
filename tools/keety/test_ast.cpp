@@ -8,6 +8,7 @@
 #include "Token.h"
 #include "AST.h"
 #include "ASTPrinter.h"
+#include "BorrowChecker.h"
 #include "Diagnostic.h"
 #include "Lexer.h"
 #include "Parser.h"
@@ -536,8 +537,12 @@ fn takeBuffer(move buf: Buffer): Buffer {
 
 fn main(): void {
     let mut b: Buffer = Buffer{};
-    let r: &Buffer = &b;
-    let rmut: &mut Buffer = &mut b;
+    {
+        let r: &Buffer = &b;
+    }
+    {
+        let rmut: &mut Buffer = &mut b;
+    }
     let movedB = move b;
 }
 )";
@@ -612,6 +617,127 @@ fn main(): void {
     assert(diagFormatted.find("help: value was moved earlier. Consider borrowing instead: '&buf'") != std::string::npos);
 
     std::cout << "Feature 9 Phase 1 (Tokens, AST, References, Moves & Diagnostics) verification passed! 🐱" << std::endl;
+
+    // =========================================================================
+    // Feature 9: Phase 2 - Compile-Time Borrow Checker Engine Tests
+    // =========================================================================
+    BorrowChecker checker;
+    bool checkedOk = checker.check(*parsedBorrow, borrowCode);
+    assert(checkedOk);
+    assert(checker.getDiagnostics().empty());
+
+    // Test E0501: Use of moved value
+    std::string errCode1 = R"(
+module ErrTest1;
+fn broken(): void {
+    let mut b: Buffer = Buffer{};
+    let movedB = move b;
+    b.size();
+}
+)";
+    Lexer errLexer1(errCode1, "ErrTest1.keet");
+    auto errTokens1 = errLexer1.tokenize();
+    Parser errParser1(errTokens1, "ErrTest1");
+    auto errAst1 = errParser1.parse();
+    BorrowChecker checker1;
+    bool checked1 = checker1.check(*errAst1, errCode1);
+    assert(!checked1);
+    assert(checker1.getDiagnostics().size() == 1);
+    assert(checker1.getDiagnostics()[0].code == ErrorCode::E0501_UseOfMovedValue);
+
+    // Test E0502: Borrow conflict (mutable borrow while immutably borrowed)
+    std::string errCode2 = R"(
+module ErrTest2;
+fn broken(): void {
+    let mut b: Buffer = Buffer{};
+    let r: &Buffer = &b;
+    let rmut: &mut Buffer = &mut b;
+}
+)";
+    Lexer errLexer2(errCode2, "ErrTest2.keet");
+    auto errTokens2 = errLexer2.tokenize();
+    Parser errParser2(errTokens2, "ErrTest2");
+    auto errAst2 = errParser2.parse();
+    BorrowChecker checker2;
+    bool checked2 = checker2.check(*errAst2, errCode2);
+    assert(!checked2);
+    assert(checker2.getDiagnostics().size() == 1);
+    assert(checker2.getDiagnostics()[0].code == ErrorCode::E0502_BorrowConflict);
+
+    // Test E0503: Multiple mutable borrows
+    std::string errCode3 = R"(
+module ErrTest3;
+fn broken(): void {
+    let mut b: Buffer = Buffer{};
+    let r1: &mut Buffer = &mut b;
+    let r2: &mut Buffer = &mut b;
+}
+)";
+    Lexer errLexer3(errCode3, "ErrTest3.keet");
+    auto errTokens3 = errLexer3.tokenize();
+    Parser errParser3(errTokens3, "ErrTest3");
+    auto errAst3 = errParser3.parse();
+    BorrowChecker checker3;
+    bool checked3 = checker3.check(*errAst3, errCode3);
+    assert(!checked3);
+    assert(checker3.getDiagnostics().size() == 1);
+    assert(checker3.getDiagnostics()[0].code == ErrorCode::E0503_MultipleMutableBorrows);
+
+    // Test E0504: Mutation during borrow
+    std::string errCode4 = R"(
+module ErrTest4;
+fn broken(): void {
+    let mut b: Buffer = Buffer{};
+    let r: &Buffer = &b;
+    b = Buffer{};
+}
+)";
+    Lexer errLexer4(errCode4, "ErrTest4.keet");
+    auto errTokens4 = errLexer4.tokenize();
+    Parser errParser4(errTokens4, "ErrTest4");
+    auto errAst4 = errParser4.parse();
+    BorrowChecker checker4;
+    bool checked4 = checker4.check(*errAst4, errCode4);
+    assert(!checked4);
+    assert(checker4.getDiagnostics().size() == 1);
+    assert(checker4.getDiagnostics()[0].code == ErrorCode::E0504_MutationDuringBorrow);
+
+    // Test E0505: Dangling reference to local
+    std::string errCode5 = R"(
+module ErrTest5;
+fn broken(): &Buffer {
+    let b: Buffer = Buffer{};
+    return &b;
+}
+)";
+    Lexer errLexer5(errCode5, "ErrTest5.keet");
+    auto errTokens5 = errLexer5.tokenize();
+    Parser errParser5(errTokens5, "ErrTest5");
+    auto errAst5 = errParser5.parse();
+    BorrowChecker checker5;
+    bool checked5 = checker5.check(*errAst5, errCode5);
+    assert(!checked5);
+    assert(checker5.getDiagnostics().size() == 1);
+    assert(checker5.getDiagnostics()[0].code == ErrorCode::E0505_DanglingReference);
+
+    // Test E0506: Move out of borrowed reference
+    std::string errCode6 = R"(
+module ErrTest6;
+fn broken(b: &Buffer): void {
+    let x = move b;
+}
+)";
+    Lexer errLexer6(errCode6, "ErrTest6.keet");
+    auto errTokens6 = errLexer6.tokenize();
+    Parser errParser6(errTokens6, "ErrTest6");
+    auto errAst6 = errParser6.parse();
+    BorrowChecker checker6;
+    bool checked6 = checker6.check(*errAst6, errCode6);
+    assert(!checked6);
+    assert(checker6.getDiagnostics().size() == 1);
+    assert(checker6.getDiagnostics()[0].code == ErrorCode::E0506_CannotMoveBorrowed);
+
+    std::cout << "Feature 9 Phase 2 (BorrowChecker Engine & All 6 Memory Safety Rules) verification passed! 🐱" << std::endl;
 
     std::cout << "All Phase 1, Phase 2, & Phase 3 AST, Parser & Codegen assertions passed successfully! 🐱" << std::endl;
     return 0;

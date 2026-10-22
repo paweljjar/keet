@@ -1,0 +1,53 @@
+module TestBorrowChecker;
+
+fn readString(s: &string): int {
+    return s.size();
+}
+
+fn appendSuffix(s: &mut string, suffix: string): void {
+    s = s + suffix;
+}
+
+fn consumeString(move s: string): string {
+    return move s;
+}
+
+fn main(): void {
+    io.println("Running KeetScript Borrow Checker & Memory Safety Tests...");
+
+    // 1. Immutable reference borrow
+    let title: string = "KeetScript";
+    let len: int = readString(&title);
+    assertEq(len, 10);
+
+    // 2. Mutable reference borrow
+    let mut greeting: string = "Hello";
+    appendSuffix(&mut greeting, " Keet");
+    assertEq(greeting, "Hello Keet");
+
+    // 3. Lexical borrow scoping (borrow released when block ends)
+    let mut data: string = "Data";
+    {
+        let r: &string = &data;
+        assertEq(readString(r), 4);
+    }
+    // r has gone out of scope, so mutable borrow is valid
+    let rmut: &mut string = &mut data;
+    appendSuffix(rmut, "Base");
+    assertEq(data, "DataBase");
+
+    // 4. Ownership transfer via move keyword
+    let source: string = "SafeMemory";
+    let transferred: string = consumeString(move source);
+    assertEq(transferred, "SafeMemory");
+
+    // 5. Reinitialization after move
+    let mut reusable: string = "First";
+    let movedFirst: string = move reusable;
+    assertEq(movedFirst, "First");
+    reusable = "Second";
+    let movedSecond: string = move reusable;
+    assertEq(movedSecond, "Second");
+
+    io.println("KeetScript Borrow Checker & Memory Safety Tests Passed! 🐱");
+}
