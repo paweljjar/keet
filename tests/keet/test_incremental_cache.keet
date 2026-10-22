@@ -1,0 +1,50 @@
+module TestIncrementalCache;
+
+export struct CacheRecord {
+    filePath: string,
+    hash: string,
+    sizeBytes: int,
+    isFresh: bool = true
+}
+
+fn computeDigest(text: &string): string {
+    let mut prefix: string = "hash_";
+    return prefix + text;
+}
+
+fn updateRecordSize(record: &mut CacheRecord, newSize: int): void {
+    record.sizeBytes = newSize;
+}
+
+fn markStale(record: &mut CacheRecord): void {
+    record.isFresh = false;
+}
+
+fn main(): void {
+    io.println("Running KeetScript Incremental Compilation & Cache Tests...");
+
+    // 1. Struct creation and field defaults
+    let mut rec = CacheRecord {
+        filePath: "src/Component.keet",
+        hash: "a1b2c3d4e5f6",
+        sizeBytes: 1024
+    };
+
+    assertEq(rec.filePath, "src/Component.keet");
+    assertEq(rec.hash, "a1b2c3d4e5f6");
+    assertEq(rec.sizeBytes, 1024);
+    assert(rec.isFresh);
+
+    // 2. Reference borrowing
+    let digest: string = computeDigest(&rec.hash);
+    assertEq(digest, "hash_a1b2c3d4e5f6");
+
+    // 3. Mutable borrowing and in-place updates
+    updateRecordSize(&mut rec, 2048);
+    assertEq(rec.sizeBytes, 2048);
+
+    markStale(&mut rec);
+    assert(!rec.isFresh);
+
+    io.println("All KeetScript Incremental Compilation & Cache tests passed!");
+}

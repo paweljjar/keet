@@ -90,6 +90,7 @@ add_executable(keety
         tools/keety/Codegen.cpp
         tools/keety/BorrowChecker.cpp
         tools/keety/KIR.cpp
+        tools/keety/IncrementalCache.cpp
 )
 target_include_directories(keety PRIVATE tools/keety)
 
@@ -108,6 +109,7 @@ add_executable(keety_test_ast
         tools/keety/Codegen.cpp
         tools/keety/BorrowChecker.cpp
         tools/keety/KIR.cpp
+        tools/keety/IncrementalCache.cpp
 )
 target_include_directories(keety_test_ast PRIVATE tools/keety)
 add_test(NAME keety_test_ast COMMAND keety_test_ast)
@@ -176,6 +178,17 @@ keet_add_test(test_cpp_kir tests/cpp/test_kir.cpp
 )
 target_include_directories(test_cpp_kir PRIVATE tools/keety)
 
+# KeetScript Incremental Compilation & K-IR Cache C++ unit test
+keet_add_test(test_cpp_incremental_cache tests/cpp/test_incremental_cache.cpp
+        tools/keety/Lexer.cpp
+        tools/keety/Parser.cpp
+        tools/keety/Codegen.cpp
+        tools/keety/BorrowChecker.cpp
+        tools/keety/KIR.cpp
+        tools/keety/IncrementalCache.cpp
+)
+target_include_directories(test_cpp_incremental_cache PRIVATE tools/keety)
+
 # =============================================================================
 # KeetScript Test Suite (tests/keet)
 # =============================================================================
@@ -239,3 +252,7 @@ add_test(NAME test_keet_borrow_checker COMMAND test_keet_borrow_checker)
 # KeetScript native test: K-IR Lowering & Execution Pipeline
 keet_add_executable(test_keet_kir tests/keet/test_kir.keet)
 add_test(NAME test_keet_kir COMMAND test_keet_kir)
+
+# KeetScript native test: Incremental Compilation & K-IR Cache
+keet_add_executable(test_keet_incremental_cache tests/keet/test_incremental_cache.keet)
+add_test(NAME test_keet_incremental_cache COMMAND test_keet_incremental_cache)

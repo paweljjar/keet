@@ -4,12 +4,15 @@
 //
 
 #include <iostream>
+#include <fstream>
 #include <cassert>
+#include <filesystem>
 #include "Token.h"
 #include "AST.h"
 #include "ASTPrinter.h"
 #include "BorrowChecker.h"
 #include "Diagnostic.h"
+#include "IncrementalCache.h"
 #include "KIR.h"
 #include "Lexer.h"
 #include "Parser.h"
@@ -772,6 +775,53 @@ fn broken(b: &Buffer): void {
 
     std::cout << "Feature 9 Phase 3 (K-IR Intermediate Representation & Serialization) verification passed! 🐱" << std::endl;
 
-    std::cout << "All Phase 1, Phase 2, & Phase 3 AST, Parser & Codegen assertions passed successfully! 🐱" << std::endl;
+    // =========================================================================
+    // Feature 9: Phase 4 - Incremental Dependency Graph & Disk Cache Tests
+    // =========================================================================
+    std::filesystem::path phase4CacheDir = ".test_ast_phase4_cache";
+    IncrementalCache phase4Cache(phase4CacheDir);
+    phase4Cache.clear();
+
+    // Verify HashUtil
+    std::string testContent = "module Phase4Demo;\nfn run(): void {}\n";
+    std::string testHash = HashUtil::hashString(testContent);
+    assert(!testHash.empty());
+    assert(testHash == HashUtil::hashString(testContent));
+
+    // Verify Dependency Graph
+    std::filesystem::path fakeSourcePath = ".test_ast_phase4_demo.keet";
+    {
+        std::ofstream out(fakeSourcePath);
+        out << testContent;
+    }
+    std::string fakeSource = fakeSourcePath.string();
+    assert(!phase4Cache.isFresh(fakeSource));
+
+    // Save KIR to cache
+    bool p4Saved = phase4Cache.saveKIR(fakeSource, *kirMod);
+    assert(p4Saved);
+    assert(phase4Cache.getStats().bytesSaved > 0);
+
+    // Should now be fresh
+    assert(phase4Cache.isFresh(fakeSource));
+
+    // Load from cache
+    auto loadedP4KIR = phase4Cache.loadKIR(fakeSource);
+    assert(loadedP4KIR != nullptr);
+    assert(loadedP4KIR->name == kirMod->name);
+    assert(loadedP4KIR->functions.size() == kirMod->functions.size());
+    assert(loadedP4KIR->print() == kirMod->print());
+    assert(phase4Cache.getStats().cacheHits == 1);
+
+    // Invalidation & Clear
+    phase4Cache.invalidate(fakeSource);
+    assert(!phase4Cache.isFresh(fakeSource));
+    phase4Cache.clear();
+    std::filesystem::remove(fakeSourcePath);
+    std::filesystem::remove_all(phase4CacheDir);
+
+    std::cout << "Feature 9 Phase 4 (Incremental Dependency Graph & Disk Cache) verification passed! 🐱" << std::endl;
+
+    std::cout << "All Phase 1, Phase 2, Phase 3, & Phase 4 AST, Parser, Codegen & Pipeline assertions passed successfully! 🐱" << std::endl;
     return 0;
 }
