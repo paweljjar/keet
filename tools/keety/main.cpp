@@ -34,6 +34,7 @@ namespace {
                   << "      --lint                    Perform lexical & syntactic check without emitting code\n"
                   << "      --emit-kir                Print textual K-IR (Intermediate Representation) to stdout\n"
                   << "      --incremental             Enable fast incremental compilation via K-IR disk cache\n"
+                  << "      --systems                 Enable strict borrow checker enforcement for systems modules\n"
                   << "      --cache-dir <path>        Custom K-IR cache directory (default: .cattery/cache/kir)\n"
                   << "      --clear-cache             Clear the incremental compilation cache and exit\n"
                   << "      --help                    Display this help message and exit\n";
@@ -62,6 +63,7 @@ int main(int argc, char* argv[]) {
     bool libMode = false;
     bool emitKir = false;
     bool incrementalMode = false;
+    bool systemsMode = false;
     bool clearCache = false;
     std::string cacheDir = ".cattery/cache/kir";
 
@@ -76,6 +78,8 @@ int main(int argc, char* argv[]) {
             emitKir = true;
         } else if (arg == "--incremental") {
             incrementalMode = true;
+        } else if (arg == "--systems" || arg == "--strict-borrows") {
+            systemsMode = true;
         } else if (arg == "--clear-cache") {
             clearCache = true;
         } else if (arg == "--cache-dir" && i + 1 < argc) {
@@ -169,8 +173,9 @@ int main(int argc, char* argv[]) {
         }
 
         // Step 2.5: Compile-Time Memory Safety (Borrow Checker)
-        // Skip borrow-checking if cached and fresh
-        if (!incrementalMode || !cache.isFresh(inputFile)) {
+        // Phase 5.5: Isolate borrow checker to expert/systems modules or explicit --systems flag
+        bool shouldBorrowCheck = systemsMode || ast->isSystemsMode;
+        if (shouldBorrowCheck && (!incrementalMode || !cache.isFresh(inputFile))) {
             Keety::BorrowChecker borrowChecker;
             borrowChecker.checkOrThrow(*ast, source);
         }

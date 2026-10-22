@@ -21,6 +21,7 @@ namespace Keety {
             !_check(TokenKind::TagStyleOpen)) {
             file->isPureModule = true;
             file->moduleBlock = _parsePureModule();
+            file->isSystemsMode = _isSystemsMode || (file->moduleBlock && file->moduleBlock->isSystems);
             return file;
         }
 
@@ -50,6 +51,7 @@ namespace Keety {
             }
         }
 
+        file->isSystemsMode = _isSystemsMode;
         return file;
     }
 
@@ -844,9 +846,28 @@ namespace Keety {
         auto mod = std::make_unique<PureModule>(_peek().loc);
 
         while (!_isAtEnd()) {
-            if (_match(TokenKind::KwModule)) {
+            if (_check(TokenKind::Identifier) && _peek().text == "systems" &&
+                _cursor + 1 < _tokens.size() && _tokens[_cursor + 1].is(TokenKind::KwModule)) {
+                _advance(); // consume 'systems'
+                _advance(); // consume 'module'
                 mod->moduleName = _consume(TokenKind::Identifier, "Expected module identifier").text;
                 _consume(TokenKind::Semicolon, "Expected ';' after module declaration");
+                mod->isSystems = true;
+                _isSystemsMode = true;
+            } else if (_match(TokenKind::KwModule)) {
+                mod->moduleName = _consume(TokenKind::Identifier, "Expected module identifier").text;
+                if (_check(TokenKind::Identifier) && _peek().text == "systems") {
+                    _advance(); // consume 'systems'
+                    mod->isSystems = true;
+                    _isSystemsMode = true;
+                }
+                _consume(TokenKind::Semicolon, "Expected ';' after module declaration");
+            } else if (_check(TokenKind::Invalid) && _peek().text == "@" &&
+                       _cursor + 1 < _tokens.size() && _tokens[_cursor + 1].text == "systems") {
+                _advance(); // @
+                _advance(); // systems
+                mod->isSystems = true;
+                _isSystemsMode = true;
             } else if (_check(TokenKind::KwImport)) {
                 mod->imports.push_back(_parseImport());
             } else if (_match(TokenKind::KwExport)) {
@@ -887,12 +908,17 @@ namespace Keety {
         std::string prefix;
         if (_match(TokenKind::Ampersand)) {
             prefix = "&";
+            _isSystemsMode = true;
             if (_check(TokenKind::Lifetime)) {
                 prefix += _advance().text + " ";
             }
             if (_match(TokenKind::KwMut)) {
                 prefix += "mut ";
             }
+        }
+
+        if (_check(TokenKind::Star)) {
+            throw ParserException("Raw pointers ('*') are not supported in KeetScript. KeetScript uses safe value semantics and managed types.", _peek().loc);
         }
 
         std::string typeName;
@@ -929,6 +955,9 @@ namespace Keety {
                 }
                 typeName += _advance().text;
             }
+        }
+        if (_check(TokenKind::Star)) {
+            throw ParserException("Raw pointers ('*') are not supported in KeetScript. KeetScript uses safe value semantics and managed types.", _peek().loc);
         }
         if (typeName == "io::Buffer" || typeName == "io.Buffer") typeName = "Buffer";
         if (typeName == "file::File" || typeName == "file.File") typeName = "File";
@@ -977,6 +1006,7 @@ namespace Keety {
                     ParameterDecl param;
                     if (_match(TokenKind::KwMove)) {
                         param.isMove = true;
+                        _isSystemsMode = true;
                     }
                     param.name = _consume(TokenKind::Identifier, "Expected constructor parameter name").text;
                     if (_match(TokenKind::Colon)) {
@@ -984,6 +1014,9 @@ namespace Keety {
                         auto ann = TypeAnnotation::parse(param.typeName);
                         param.refKind = ann.refKind;
                         param.lifetime = ann.lifetime;
+                        if (param.refKind != ReferenceKind::Value || !param.lifetime.empty()) {
+                            _isSystemsMode = true;
+                        }
                     }
                     ctor->parameters.push_back(param);
                     if (!_check(TokenKind::RightParen)) {
@@ -1008,6 +1041,7 @@ namespace Keety {
                     ParameterDecl param;
                     if (_match(TokenKind::KwMove)) {
                         param.isMove = true;
+                        _isSystemsMode = true;
                     }
                     param.name = _consume(TokenKind::Identifier, "Expected method parameter name").text;
                     if (_match(TokenKind::Colon)) {
@@ -1015,6 +1049,9 @@ namespace Keety {
                         auto ann = TypeAnnotation::parse(param.typeName);
                         param.refKind = ann.refKind;
                         param.lifetime = ann.lifetime;
+                        if (param.refKind != ReferenceKind::Value || !param.lifetime.empty()) {
+                            _isSystemsMode = true;
+                        }
                     }
                     method->parameters.push_back(param);
                     if (!_check(TokenKind::RightParen)) {
@@ -1134,6 +1171,7 @@ namespace Keety {
             ParameterDecl param;
             if (_match(TokenKind::KwMove)) {
                 param.isMove = true;
+                _isSystemsMode = true;
             }
             param.name = _consume(TokenKind::Identifier, "Expected parameter name").text;
             if (_match(TokenKind::Colon)) {
@@ -1141,6 +1179,9 @@ namespace Keety {
                 auto ann = TypeAnnotation::parse(param.typeName);
                 param.refKind = ann.refKind;
                 param.lifetime = ann.lifetime;
+                if (param.refKind != ReferenceKind::Value || !param.lifetime.empty()) {
+                    _isSystemsMode = true;
+                }
             }
             fn->parameters.push_back(param);
             if (!_check(TokenKind::RightParen)) {
@@ -1176,6 +1217,25 @@ namespace Keety {
         while (!_isAtEnd() && braceDepth > 0) {
             bool isDotBefore = lastWasDot;
             lastWasDot = false;
+
+            // Reject pointer arrow operator '->' in everyday KeetScript statement bodies
+            if (_check(TokenKind::Arrow)) {
+                throw ParserException("Pointer arrow operator ('->') is not supported in KeetScript. Use '.' dot notation for member access.", _peek().loc);
+            }
+
+            // Reject raw pointer dereference '*ptr' in everyday KeetScript
+            if (_check(TokenKind::Star)) {
+                bool isUnary = (_cursor <= startTokenIdx ||
+                                _tokens[_cursor - 1].is(TokenKind::Assign) ||
+                                _tokens[_cursor - 1].is(TokenKind::LeftParen) ||
+                                _tokens[_cursor - 1].is(TokenKind::Comma) ||
+                                _tokens[_cursor - 1].is(TokenKind::Semicolon) ||
+                                _tokens[_cursor - 1].is(TokenKind::LeftBrace) ||
+                                _tokens[_cursor - 1].is(TokenKind::KwReturn));
+                if (isUnary) {
+                    throw ParserException("Raw pointer dereference ('*') is not supported in KeetScript. KeetScript uses safe value semantics.", _peek().loc);
+                }
+            }
 
             // Object literal / designated initializer: { field: val, ... }
             if (_check(TokenKind::LeftBrace)) {
@@ -1463,6 +1523,7 @@ namespace Keety {
             // Ownership transfer: move <ident_or_expr> -> std::move(<expr>)
             if (_check(TokenKind::KwMove)) {
                 _advance(); // consume 'move'
+                _isSystemsMode = true;
                 appendToken("std::move(", true, false);
                 int mDepth = 0;
                 bool firstTok = true;
@@ -1493,6 +1554,7 @@ namespace Keety {
                 _advance(); // consume '&'
                 if (_match(TokenKind::KwMut)) {
                     // &mut <expr> in C++ call context is the lvalue reference itself
+                    _isSystemsMode = true;
                     continue;
                 } else {
                     bool isPrefix = (_cursor <= 1 || _tokens[_cursor - 2].is(TokenKind::LeftParen) ||
@@ -1501,6 +1563,7 @@ namespace Keety {
                                      _tokens[_cursor - 2].is(TokenKind::Colon));
                     if (isPrefix) {
                         // Unary immutable borrow &x in C++ is the lvalue itself
+                        _isSystemsMode = true;
                         continue;
                     } else {
                         // Binary bitwise &

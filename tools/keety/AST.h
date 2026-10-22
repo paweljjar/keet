@@ -550,6 +550,7 @@ namespace Keety {
 
     struct PureModule : public ASTNode { // Container for a pure KeetScript file (.keet without XML tags)
         std::string moduleName; // Optional module namespace
+        bool isSystems = false; // Phase 5.5: Explicit systems module mode
         std::vector<std::shared_ptr<ImportCppDecl>> imports; // C++ header imports
         std::vector<std::shared_ptr<ClassDecl>> classes; // Class declarations
         std::vector<std::shared_ptr<StructDecl>> structs; // Struct declarations
@@ -568,6 +569,7 @@ namespace Keety {
     struct SourceFile : public ASTNode { // Top-level root AST node representing a complete .keet file
         std::string componentName; // Derived component or module name (e.g., "CounterCard", "MathUtils")
         bool isPureModule = false; // True if this file is a standalone pure module without XML tags
+        bool isSystemsMode = false; // Phase 5.5: True if module is systems module or uses systems features
         std::unique_ptr<PureModule> moduleBlock; // Pure module AST when isPureModule == true
         std::unique_ptr<ServerBlock> server; // Optional <server> section AST (Full-Stack App mode)
         std::unique_ptr<ScriptBlock> script; // Optional <script> section AST

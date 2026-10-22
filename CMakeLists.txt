@@ -256,3 +256,7 @@ add_test(NAME test_keet_kir COMMAND test_keet_kir)
 # KeetScript native test: Incremental Compilation & K-IR Cache
 keet_add_executable(test_keet_incremental_cache tests/keet/test_incremental_cache.keet)
 add_test(NAME test_keet_incremental_cache COMMAND test_keet_incremental_cache)
+
+# KeetScript native test: Everyday Ergonomics & Pointer-Free Value Semantics
+keet_add_executable(test_keet_ergonomics tests/keet/test_ergonomics.keet)
+add_test(NAME test_keet_ergonomics COMMAND test_keet_ergonomics)

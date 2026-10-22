@@ -107,6 +107,7 @@ namespace Keety {
             std::vector<Token> _tokens;
             std::string _componentName;
             size_t _cursor = 0;
+            bool _isSystemsMode = false;
     };
 
 } // namespace Keety

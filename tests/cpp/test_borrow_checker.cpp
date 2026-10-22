@@ -225,4 +225,129 @@ fn broken(): void {
     KEET_ASSERT_THROWS(checker.checkOrThrow(*ast, code), DiagnosticException);
 }
 
+KEET_TEST(Ergonomics, RawPointerTypeRejection) {
+    std::string code = R"(
+module TestPointers;
+fn process(p: int*): void {
+}
+)";
+    Lexer lexer(code, "test_ptr.keet");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens, "TestPointers");
+    try {
+        parser.parse();
+        KEET_ASSERT_TRUE(false); // Should have thrown
+    } catch (const ParserException& ex) {
+        std::string msg = ex.what();
+        KEET_ASSERT_TRUE(msg.find("Raw pointers ('*') are not supported in KeetScript") != std::string::npos);
+    }
+}
+
+KEET_TEST(Ergonomics, ArrowOperatorRejection) {
+    std::string code = R"(
+module TestArrow;
+fn process(): void {
+    let obj = User{};
+    obj->getName();
+}
+)";
+    Lexer lexer(code, "test_arrow.keet");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens, "TestArrow");
+    try {
+        parser.parse();
+        KEET_ASSERT_TRUE(false); // Should have thrown
+    } catch (const ParserException& ex) {
+        std::string msg = ex.what();
+        KEET_ASSERT_TRUE(msg.find("Pointer arrow operator ('->') is not supported in KeetScript") != std::string::npos);
+    }
+}
+
+KEET_TEST(Ergonomics, PointerDereferenceRejection) {
+    std::string code = R"(
+module TestDeref;
+fn process(): void {
+    let ptr = 42;
+    let val = *ptr;
+}
+)";
+    Lexer lexer(code, "test_deref.keet");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens, "TestDeref");
+    try {
+        parser.parse();
+        KEET_ASSERT_TRUE(false); // Should have thrown
+    } catch (const ParserException& ex) {
+        std::string msg = ex.what();
+        KEET_ASSERT_TRUE(msg.find("Raw pointer dereference ('*') is not supported in KeetScript") != std::string::npos);
+    }
+}
+
+KEET_TEST(Ergonomics, ValidMultiplicationNotRejected) {
+    std::string code = R"(
+module TestMathExpr;
+fn multiply(a: int, b: int): int {
+    let product = a * b * 5;
+    return product;
+}
+)";
+    Lexer lexer(code, "test_math.keet");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens, "TestMathExpr");
+    auto ast = parser.parse();
+    KEET_ASSERT_TRUE(ast != nullptr);
+    KEET_ASSERT_FALSE(ast->isSystemsMode);
+}
+
+KEET_TEST(Ergonomics, SystemsModeDetection) {
+    // 1. Explicit 'systems module' syntax
+    std::string codeSys1 = "systems module MySys1;\nfn test(): void {}\n";
+    {
+        Lexer lex(codeSys1, "sys1.keet");
+        Parser p(lex.tokenize(), "Sys1");
+        auto ast = p.parse();
+        KEET_ASSERT_TRUE(ast->isSystemsMode);
+        KEET_ASSERT_TRUE(ast->moduleBlock && ast->moduleBlock->isSystems);
+    }
+
+    // 2. Trailing 'module Name systems;' syntax
+    std::string codeSys2 = "module MySys2 systems;\nfn test(): void {}\n";
+    {
+        Lexer lex(codeSys2, "sys2.keet");
+        Parser p(lex.tokenize(), "Sys2");
+        auto ast = p.parse();
+        KEET_ASSERT_TRUE(ast->isSystemsMode);
+        KEET_ASSERT_TRUE(ast->moduleBlock && ast->moduleBlock->isSystems);
+    }
+
+    // 3. '@systems' annotation
+    std::string codeSys3 = "@systems\nmodule MySys3;\nfn test(): void {}\n";
+    {
+        Lexer lex(codeSys3, "sys3.keet");
+        Parser p(lex.tokenize(), "Sys3");
+        auto ast = p.parse();
+        KEET_ASSERT_TRUE(ast->isSystemsMode);
+        KEET_ASSERT_TRUE(ast->moduleBlock && ast->moduleBlock->isSystems);
+    }
+
+    // 4. Implicit systems mode from parameter &mut
+    std::string codeImplicit = "module ImplicitSys;\nfn mutate(buf: &mut string): void {}\n";
+    {
+        Lexer lex(codeImplicit, "imp.keet");
+        Parser p(lex.tokenize(), "Imp");
+        auto ast = p.parse();
+        KEET_ASSERT_TRUE(ast->isSystemsMode);
+    }
+
+    // 5. Everyday module without systems features
+    std::string codeEveryday = "module Everyday;\nfn add(x: int, y: int): int { return x + y; }\n";
+    {
+        Lexer lex(codeEveryday, "everyday.keet");
+        Parser p(lex.tokenize(), "Everyday");
+        auto ast = p.parse();
+        KEET_ASSERT_FALSE(ast->isSystemsMode);
+        KEET_ASSERT_FALSE(ast->moduleBlock && ast->moduleBlock->isSystems);
+    }
+}
+
 KEET_TEST_MAIN()

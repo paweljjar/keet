@@ -57,6 +57,7 @@ namespace Keety {
         PlusAssign, // +=
         MinusAssign, // -=
         Ampersand, // &
+        Star, // *
         Lifetime, // 'a, 'static, etc.
 
         // Keywords
@@ -225,6 +226,7 @@ namespace Keety {
                 case TokenKind::KwMove: return "move";
                 case TokenKind::KwMut: return "mut";
                 case TokenKind::Ampersand: return "&";
+                case TokenKind::Star: return "*";
                 case TokenKind::Lifetime: return "lifetime";
                 case TokenKind::Identifier: return "identifier";
                 case TokenKind::StringLiteral: return "string literal";

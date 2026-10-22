@@ -45,6 +45,9 @@ namespace Keety {
         size_t start = _cursor;
         while (!_isAtEnd()) {
             char c = _peek();
+            if (c == '-' && (_peek(1) == '>' || _peek(1) == '-' || _peek(1) == '=')) {
+                break;
+            }
             if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') {
                 _advance();
             } else {
@@ -246,6 +249,9 @@ namespace Keety {
                 } else if (c == '&') {
                     _advance();
                     tokens.emplace_back(TokenKind::Ampersand, "&", loc);
+                } else if (c == '*') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::Star, "*", loc);
                 } else if (c == '|' && _peek(1) == '|') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, "||", loc);
@@ -367,6 +373,9 @@ namespace Keety {
                 } else if (c == '&') {
                     _advance();
                     tokens.emplace_back(TokenKind::Ampersand, "&", loc);
+                } else if (c == '*') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::Star, "*", loc);
                 } else if (c == '|' && _peek(1) == '|') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, "||", loc);
@@ -476,6 +485,9 @@ namespace Keety {
                 } else if (c == '&') {
                     _advance();
                     tokens.emplace_back(TokenKind::Ampersand, "&", loc);
+                } else if (c == '*') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::Star, "*", loc);
                 } else if (c == '|' && _peek(1) == '|') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, "||", loc);
