@@ -77,8 +77,10 @@ namespace Keety {
 
             // Script declaration parsers
             std::shared_ptr<ImportCppDecl> _parseImportCpp();
+            std::shared_ptr<ImportCppDecl> _parseImport();
             std::shared_ptr<StateDecl> _parseStateDecl();
             std::shared_ptr<LetDecl> _parseLetDecl();
+            std::shared_ptr<ConstDecl> _parseConst(bool isExported);
             std::shared_ptr<FunctionDecl> _parseFunctionDecl();
 
             // Template element and control flow parsers

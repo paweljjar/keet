@@ -1,0 +1,22 @@
+module TestCollections;
+
+fn main(): void {
+    io.println("Running KeetScript Collections Tests...");
+
+    // Array collection
+    let names: array<string> = ["Alice", "Bob", "Charlie", "David"];
+    assertEq(names.size(), 4);
+    assertEq(names[0], "Alice");
+    assertEq(names[1], "Bob");
+    assertEq(names[2], "Charlie");
+    assertEq(names[3], "David");
+
+    // Iteration
+    let count: int = 0;
+    for name in names {
+        count = count + 1;
+    }
+    assertEq(count, 4);
+
+    io.println("KeetScript Collections Tests Passed! 🐱");
+}

@@ -271,11 +271,13 @@ namespace Keety {
 
         while (!_isAtEnd() && !_check(TokenKind::TagScriptClose)) {
             if (_check(TokenKind::KwImport)) {
-                script->imports.push_back(_parseImportCpp());
+                script->imports.push_back(_parseImport());
             } else if (_check(TokenKind::KwState)) {
                 script->stateDecls.push_back(_parseStateDecl());
             } else if (_check(TokenKind::KwLet)) {
                 script->letDecls.push_back(_parseLetDecl());
+            } else if (_check(TokenKind::KwConst)) {
+                script->constants.push_back(_parseConst(false));
             } else if (_check(TokenKind::KwDef)) {
                 script->functions.push_back(_parseFunctionDecl());
             } else if (_check(TokenKind::KwErrtype) || (_check(TokenKind::Identifier) && _peek().text == "errtype")) {
@@ -287,6 +289,80 @@ namespace Keety {
 
         _consume(TokenKind::TagScriptClose, "Expected '</script>' to close script section");
         return script;
+    }
+
+    std::shared_ptr<ImportCppDecl> Parser::_parseImport() {
+        if (_peek(1).is(TokenKind::KwCpp)) {
+            return _parseImportCpp();
+        }
+
+        SourceLocation loc = _consume(TokenKind::KwImport, "Expected 'import'").loc;
+        auto importDecl = std::make_shared<ImportCppDecl>(loc);
+
+        // Case 1: import { SymbolA, SymbolB } from "path";
+        if (_match(TokenKind::LeftBrace)) {
+            importDecl->kind = ImportCppDecl::ImportKind::SelectiveSymbols;
+            while (!_isAtEnd() && !_check(TokenKind::RightBrace)) {
+                importDecl->symbols.push_back(_consume(TokenKind::Identifier, "Expected imported symbol identifier").text);
+                if (!_check(TokenKind::RightBrace)) {
+                    _consume(TokenKind::Comma, "Expected ',' between imported symbols");
+                }
+            }
+            _consume(TokenKind::RightBrace, "Expected '}' closing imported symbol list");
+            if (_check(TokenKind::KwFrom) || (_check(TokenKind::Identifier) && _peek().text == "from")) {
+                _advance(); // consume 'from'
+            }
+            std::string path = _consume(TokenKind::StringLiteral, "Expected module path string").text;
+            if (path.size() >= 5 && path.substr(path.size() - 5) == ".keet") {
+                path = path.substr(0, path.size() - 5) + ".h";
+            }
+            importDecl->headerPath = path;
+            _match(TokenKind::Semicolon);
+            return importDecl;
+        }
+
+        // Case 2: import Symbol from "path"; OR import file; / import io;
+        if (_check(TokenKind::Identifier)) {
+            std::string ident = _advance().text;
+            if (_check(TokenKind::KwFrom) || (_check(TokenKind::Identifier) && _peek().text == "from")) {
+                _advance(); // consume 'from'
+                std::string path = _consume(TokenKind::StringLiteral, "Expected module path string").text;
+                if (path.size() >= 5 && path.substr(path.size() - 5) == ".keet") {
+                    path = path.substr(0, path.size() - 5) + ".h";
+                }
+                importDecl->kind = ImportCppDecl::ImportKind::ModuleAlias;
+                importDecl->asAlias = ident;
+                importDecl->headerPath = path;
+                _match(TokenKind::Semicolon);
+                return importDecl;
+            } else {
+                // Built-in module or standard import: import file; import io; import math;
+                importDecl->kind = ImportCppDecl::ImportKind::ModuleAlias;
+                importDecl->asAlias = ident;
+                if (ident == "file") importDecl->headerPath = "<keet/runtime/File.h>";
+                else if (ident == "io") importDecl->headerPath = "<keet/runtime/IO.h>";
+                else if (ident == "math") importDecl->headerPath = "<keet/runtime/Math.h>";
+                else if (ident == "memory" || ident == "mem") importDecl->headerPath = "<keet/runtime/Memory.h>";
+                else if (ident == "collections") importDecl->headerPath = "<keet/runtime/Collections.h>";
+                else importDecl->headerPath = "\"" + ident + ".h\"";
+                _match(TokenKind::Semicolon);
+                return importDecl;
+            }
+        }
+
+        // Case 3: import "path";
+        if (_check(TokenKind::StringLiteral)) {
+            std::string path = _advance().text;
+            if (path.size() >= 5 && path.substr(path.size() - 5) == ".keet") {
+                path = path.substr(0, path.size() - 5) + ".h";
+            }
+            importDecl->kind = ImportCppDecl::ImportKind::ModuleAlias;
+            importDecl->headerPath = path;
+            _match(TokenKind::Semicolon);
+            return importDecl;
+        }
+
+        throw ParserException("Invalid import syntax; expected '{', identifier, or string path", _peek().loc);
     }
 
     std::shared_ptr<ImportCppDecl> Parser::_parseImportCpp() {
@@ -371,6 +447,32 @@ namespace Keety {
 
         _consume(TokenKind::Semicolon, "Expected ';' after let declaration");
         return letDecl;
+    }
+
+    std::shared_ptr<ConstDecl> Parser::_parseConst(bool isExported) {
+        SourceLocation loc = _consume(TokenKind::KwConst, "Expected 'const'").loc;
+        auto constDecl = std::make_shared<ConstDecl>(loc);
+        constDecl->name = _consume(TokenKind::Identifier, "Expected constant identifier").text;
+        constDecl->isExported = isExported;
+
+        if (_match(TokenKind::Colon)) {
+            constDecl->typeName = _parseTypeName();
+        }
+
+        _consume(TokenKind::Assign, "Expected '=' after constant identifier");
+
+        std::string expr;
+        while (!_isAtEnd() && !_check(TokenKind::Semicolon)) {
+            if (!expr.empty()) expr += " ";
+            if (_peek().is(TokenKind::StringLiteral)) {
+                expr += "\"" + _advance().text + "\"";
+            } else {
+                expr += _advance().text;
+            }
+        }
+        _consume(TokenKind::Semicolon, "Expected ';' after constant declaration");
+        constDecl->valueExpr = transformZonk(expr);
+        return constDecl;
     }
 
     std::shared_ptr<FunctionDecl> Parser::_parseFunctionDecl() {
@@ -757,23 +859,27 @@ namespace Keety {
                 mod->moduleName = _consume(TokenKind::Identifier, "Expected module identifier").text;
                 _consume(TokenKind::Semicolon, "Expected ';' after module declaration");
             } else if (_check(TokenKind::KwImport)) {
-                mod->imports.push_back(_parseImportCpp());
+                mod->imports.push_back(_parseImport());
             } else if (_match(TokenKind::KwExport)) {
                 if (_check(TokenKind::KwClass)) {
                     mod->classes.push_back(_parseClass(true));
                 } else if (_check(TokenKind::KwStruct)) {
                     mod->structs.push_back(_parseStruct(true));
+                } else if (_check(TokenKind::KwConst)) {
+                    mod->constants.push_back(_parseConst(true));
                 } else if (_check(TokenKind::KwErrtype) || (_check(TokenKind::Identifier) && _peek().text == "errtype")) {
                     mod->errtypes.push_back(_parseErrtype(true));
                 } else if (_check(TokenKind::KwFn) || _check(TokenKind::KwDef)) {
                     mod->functions.push_back(_parseStandaloneFunction(true));
                 } else {
-                    throw ParserException("Expected 'class', 'struct', 'errtype', or 'fn' after 'export'", _peek().loc);
+                    throw ParserException("Expected 'class', 'struct', 'const', 'errtype', or 'fn' after 'export'", _peek().loc);
                 }
             } else if (_check(TokenKind::KwClass)) {
                 mod->classes.push_back(_parseClass(false));
             } else if (_check(TokenKind::KwStruct)) {
                 mod->structs.push_back(_parseStruct(false));
+            } else if (_check(TokenKind::KwConst)) {
+                mod->constants.push_back(_parseConst(false));
             } else if (_check(TokenKind::KwErrtype) || (_check(TokenKind::Identifier) && _peek().text == "errtype")) {
                 mod->errtypes.push_back(_parseErrtype(false));
             } else if (_check(TokenKind::KwFn) || _check(TokenKind::KwDef)) {
@@ -789,7 +895,16 @@ namespace Keety {
     }
 
     std::string Parser::_parseTypeName() {
-        std::string typeName = _consume(TokenKind::Identifier, "Expected type name").text;
+        std::string typeName;
+        if (_match(TokenKind::KwCpp)) {
+            if (_match(TokenKind::Dot)) {
+                typeName = _consume(TokenKind::Identifier, "Expected type name after 'cpp.'").text;
+            } else {
+                typeName = "cpp";
+            }
+        } else {
+            typeName = _consume(TokenKind::Identifier, "Expected type name").text;
+        }
         while ((_check(TokenKind::Colon) && _peek().text == "::") || _check(TokenKind::Dot)) {
             if (_check(TokenKind::Dot)) {
                 _advance();
@@ -967,7 +1082,7 @@ namespace Keety {
             }
             if (_match(TokenKind::Assign)) {
                 std::string expr;
-                while (!_isAtEnd() && !_check(TokenKind::Semicolon)) {
+                while (!_isAtEnd() && !_check(TokenKind::Semicolon) && !_check(TokenKind::Comma) && !_check(TokenKind::RightBrace)) {
                     if (!expr.empty()) expr += " ";
                     if (_peek().is(TokenKind::StringLiteral)) {
                         expr += "\"" + _advance().text + "\"";
@@ -977,7 +1092,9 @@ namespace Keety {
                 }
                 field->defaultValueExpr = expr;
             }
-            _consume(TokenKind::Semicolon, "Expected ';' after struct field");
+            if (_match(TokenKind::Semicolon) || _match(TokenKind::Comma)) {
+                // optional comma or semicolon
+            }
             structDecl->fields.push_back(field);
         }
 
@@ -1040,7 +1157,54 @@ namespace Keety {
             bool isDotBefore = lastWasDot;
             lastWasDot = false;
 
+            // Object literal / designated initializer: { field: val, ... }
             if (_check(TokenKind::LeftBrace)) {
+                size_t look = _cursor + 1;
+                if (look + 1 < _tokens.size() && _tokens[look].is(TokenKind::Identifier) &&
+                    _tokens[look + 1].is(TokenKind::Colon) && _tokens[look + 1].text == ":") {
+                    _advance(); // consume '{'
+                    appendToken("{", true, true);
+                    braceDepth++;
+                    while (!_isAtEnd() && !_check(TokenKind::RightBrace)) {
+                        std::string fldName = _consume(TokenKind::Identifier, "Expected field name in object literal").text;
+                        _consume(TokenKind::Colon, "Expected ':' after field name");
+                        appendToken("." + fldName + " =", true, true);
+
+                        int valDepth = 0;
+                        while (!_isAtEnd()) {
+                            if (valDepth == 0 && (_check(TokenKind::Comma) || _check(TokenKind::RightBrace) || _check(TokenKind::Semicolon))) {
+                                break;
+                            }
+                            if (_check(TokenKind::LeftParen) || _check(TokenKind::LeftBracket) || _check(TokenKind::LeftBrace)) valDepth++;
+                            else if (_check(TokenKind::RightParen) || _check(TokenKind::RightBracket) || _check(TokenKind::RightBrace)) valDepth--;
+
+                            if (_peek().is(TokenKind::StringLiteral)) {
+                                appendToken("\"" + _advance().text + "\"", true, true);
+                            } else if (_check(TokenKind::LeftBracket)) {
+                                _advance();
+                                appendToken("{", true, true);
+                                while (!_isAtEnd() && !_check(TokenKind::RightBracket)) {
+                                    if (_peek().is(TokenKind::StringLiteral)) {
+                                        appendToken("\"" + _advance().text + "\"", true, true);
+                                    } else {
+                                        appendToken(_advance().text, true, true);
+                                    }
+                                }
+                                if (_check(TokenKind::RightBracket)) _advance();
+                                appendToken("}", true, true);
+                            } else {
+                                appendToken(_advance().text, true, true);
+                            }
+                        }
+                        if (_match(TokenKind::Comma) || _match(TokenKind::Semicolon)) {
+                            appendToken(",", false, true);
+                        }
+                    }
+                    _consume(TokenKind::RightBrace, "Expected '}' closing object literal");
+                    appendToken("}", true, true);
+                    braceDepth--;
+                    continue;
+                }
                 braceDepth++;
                 appendToken("{", true, true);
                 _advance();
@@ -1055,6 +1219,138 @@ namespace Keety {
                 appendToken("}", true, true);
                 _advance();
                 continue;
+            }
+
+            // Arrow function: (...) => expr or (...) => { ... }
+            if (_check(TokenKind::LeftParen)) {
+                size_t look = _cursor + 1;
+                int depth = 1;
+                while (look < _tokens.size() && depth > 0) {
+                    if (_tokens[look].is(TokenKind::LeftParen)) depth++;
+                    else if (_tokens[look].is(TokenKind::RightParen)) depth--;
+                    look++;
+                }
+                if (depth == 0 && look < _tokens.size() && _tokens[look].is(TokenKind::FatArrow)) {
+                    _advance(); // consume '('
+                    std::string params;
+                    while (!_isAtEnd() && !_check(TokenKind::RightParen)) {
+                        std::string pName = _consume(TokenKind::Identifier, "Expected arrow parameter name").text;
+                        std::string pType = "auto";
+                        if (_match(TokenKind::Colon)) {
+                            pType = _parseTypeName();
+                            if (pType == "string") pType = "std::string";
+                            else if (pType == "array<string>" || pType == "vector<string>") pType = "std::vector<std::string>";
+                            else if (pType.rfind("array<", 0) == 0) pType = "std::vector<" + pType.substr(6);
+                            else if (pType.rfind("vector<", 0) == 0) pType = "std::" + pType;
+                        }
+                        if (!params.empty()) params += ", ";
+                        params += pType + " " + pName;
+                        _match(TokenKind::Comma);
+                    }
+                    _consume(TokenKind::RightParen, "Expected ')' after arrow parameters");
+                    _consume(TokenKind::FatArrow, "Expected '=>'");
+
+                    if (_check(TokenKind::LeftBrace)) {
+                        appendToken("[&](" + params + ")", true, true);
+                        continue;
+                    } else {
+                        std::string expr;
+                        int subDepth = 0;
+                        while (!_isAtEnd()) {
+                            if (subDepth == 0 && (_check(TokenKind::Semicolon) || _check(TokenKind::Comma) || _check(TokenKind::RightParen) || _check(TokenKind::RightBrace))) {
+                                break;
+                            }
+                            if (_check(TokenKind::LeftParen) || _check(TokenKind::LeftBracket) || _check(TokenKind::LeftBrace)) subDepth++;
+                            else if (_check(TokenKind::RightParen) || _check(TokenKind::RightBracket) || _check(TokenKind::RightBrace)) subDepth--;
+                            if (!expr.empty()) expr += " ";
+                            if (_peek().is(TokenKind::StringLiteral)) {
+                                expr += "\"" + _advance().text + "\"";
+                            } else {
+                                expr += _advance().text;
+                            }
+                        }
+                        appendToken("[&](" + params + ") { return " + expr + "; }", true, false);
+                        continue;
+                    }
+                }
+            }
+
+            // For loop: for [let] <var> in <collection> { ... }
+            if (_check(TokenKind::KwFor)) {
+                size_t look = _cursor + 1;
+                bool hasParen = false;
+                if (look < _tokens.size() && _tokens[look].is(TokenKind::LeftParen)) {
+                    hasParen = true;
+                    look++;
+                }
+                if (look < _tokens.size() && _tokens[look].is(TokenKind::KwLet)) {
+                    look++;
+                }
+                if (look + 1 < _tokens.size() && _tokens[look].is(TokenKind::Identifier) &&
+                    (_tokens[look + 1].is(TokenKind::KwIn) || (_tokens[look + 1].is(TokenKind::Identifier) && _tokens[look + 1].text == "in"))) {
+                    _advance(); // consume 'for'
+                    if (hasParen) _advance(); // consume '('
+                    if (_check(TokenKind::KwLet)) _advance(); // optional 'let'
+                    std::string itemVar = _consume(TokenKind::Identifier, "Expected loop variable name").text;
+                    _advance(); // consume 'in'
+                    std::string collExpr;
+                    int parenDepth = hasParen ? 1 : 0;
+                    while (!_isAtEnd()) {
+                        if (hasParen && _check(TokenKind::RightParen) && parenDepth == 1) {
+                            _advance(); // consume closing ')'
+                            break;
+                        }
+                        if (!hasParen && _check(TokenKind::LeftBrace)) {
+                            break;
+                        }
+                        if (_check(TokenKind::LeftParen)) parenDepth++;
+                        else if (_check(TokenKind::RightParen)) parenDepth--;
+                        if (!collExpr.empty()) collExpr += " ";
+                        collExpr += _advance().text;
+                    }
+                    appendToken("for (auto& " + itemVar + " : " + collExpr + ")", true, true);
+                    continue;
+                }
+            }
+
+            // Conditionals: if [cond] { and else if [cond] {
+            if (_check(TokenKind::KwIf) && !_peek(1).is(TokenKind::LeftParen)) {
+                _advance(); // consume 'if'
+                appendToken("if (", true, false);
+                int exprDepth = 0;
+                while (!_isAtEnd()) {
+                    if (_check(TokenKind::LeftBrace) && exprDepth == 0) {
+                        break;
+                    }
+                    if (_check(TokenKind::LeftParen)) exprDepth++;
+                    else if (_check(TokenKind::RightParen)) exprDepth--;
+                    appendToken(_advance().text, true, true);
+                }
+                appendToken(")", false, true);
+                continue;
+            }
+            if (_check(TokenKind::KwElse)) {
+                if (_peek(1).is(TokenKind::KwIf)) {
+                    _advance(); // consume 'else'
+                    _advance(); // consume 'if'
+                    if (!_peek().is(TokenKind::LeftParen)) {
+                        appendToken("else if (", true, false);
+                        int exprDepth = 0;
+                        while (!_isAtEnd()) {
+                            if (_check(TokenKind::LeftBrace) && exprDepth == 0) {
+                                break;
+                            }
+                            if (_check(TokenKind::LeftParen)) exprDepth++;
+                            else if (_check(TokenKind::RightParen)) exprDepth--;
+                            appendToken(_advance().text, true, true);
+                        }
+                        appendToken(")", false, true);
+                        continue;
+                    } else {
+                        appendToken("else if", true, true);
+                        continue;
+                    }
+                }
             }
 
             // C++ native escape: cpp.<ident> -> ::<ident>
@@ -1076,6 +1372,24 @@ namespace Keety {
                 continue;
             }
 
+            // Constant declaration: const <ident> [: <type>] [= <expr>];
+            if (_check(TokenKind::KwConst)) {
+                _advance(); // Consume 'const'
+                std::string varName = _consume(TokenKind::Identifier, "Expected constant name after 'const'").text;
+                std::string varType = "auto";
+                if (_match(TokenKind::Colon)) {
+                    varType = _parseTypeName();
+                }
+                if (varType == "string") varType = "std::string";
+                else if (varType == "io::Buffer" || varType == "io.Buffer" || varType == "Buffer") varType = "Buffer";
+                else if (varType == "file::File" || varType == "file.File" || varType == "File") varType = "File";
+                else if (varType == "vector<string>" || varType == "array<string>") varType = "std::vector<std::string>";
+                else if (varType.rfind("vector<", 0) == 0) varType = "std::" + varType;
+                else if (varType.rfind("array<", 0) == 0) varType = "std::vector<" + varType.substr(6);
+                appendToken("const " + varType + " " + varName, true, true);
+                continue;
+            }
+
             // Variable declaration: let <ident> [: <type>] [= <expr>];
             if (_check(TokenKind::KwLet)) {
                 _advance(); // Consume 'let'
@@ -1087,8 +1401,9 @@ namespace Keety {
                 if (varType == "string") varType = "std::string";
                 else if (varType == "io::Buffer" || varType == "io.Buffer" || varType == "Buffer") varType = "Buffer";
                 else if (varType == "file::File" || varType == "file.File" || varType == "File") varType = "File";
-                else if (varType == "vector<string>") varType = "std::vector<std::string>";
+                else if (varType == "vector<string>" || varType == "array<string>") varType = "std::vector<std::string>";
                 else if (varType.rfind("vector<", 0) == 0) varType = "std::" + varType;
+                else if (varType.rfind("array<", 0) == 0) varType = "std::vector<" + varType.substr(6);
                 appendToken(varType + " " + varName, true, true);
                 continue;
             }
@@ -1097,6 +1412,40 @@ namespace Keety {
             if ((_check(TokenKind::KwPrint) || (_check(TokenKind::Identifier) && _peek().text == "print")) && !isDotBefore) {
                 _advance();
                 appendToken("keet::io::print", true, false);
+                continue;
+            }
+
+            // Array literal: ["Alice", "Bob"] -> {"Alice", "Bob"} when in assignment or value position (not subscript indexing)
+            bool isSubscript = false;
+            if (_cursor > 0) {
+                const auto& prev = _tokens[_cursor - 1];
+                if (prev.is(TokenKind::Identifier) || prev.is(TokenKind::RightParen) || prev.is(TokenKind::RightBracket)) {
+                    isSubscript = true;
+                }
+            }
+
+            if (_check(TokenKind::LeftBracket) && !isDotBefore && !isSubscript) {
+                _advance();
+                appendToken("{", true, true);
+                while (!_isAtEnd() && !_check(TokenKind::RightBracket)) {
+                    if (_peek().is(TokenKind::StringLiteral)) {
+                        appendToken("\"" + _advance().text + "\"", true, true);
+                    } else if (_check(TokenKind::Comma)) {
+                        appendToken(",", false, true);
+                        _advance();
+                    } else {
+                        appendToken(_advance().text, true, true);
+                    }
+                }
+                if (_check(TokenKind::RightBracket)) _advance();
+                appendToken("}", true, true);
+                continue;
+            }
+
+            // Ternary operator: ?
+            if (_check(TokenKind::Question)) {
+                appendToken("?", true, true);
+                _advance();
                 continue;
             }
 

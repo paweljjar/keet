@@ -1,0 +1,33 @@
+module TestErrors;
+
+import file;
+
+export errtype FileError {
+    NotFound = 404,
+    PermissionDenied = 403,
+    CorruptedData = 500
+}
+
+fn main(): void {
+    io.println("Running KeetScript Errors & Zonk Tests...");
+
+    // 1. errtype explicit codes
+    let nfCode: int = getErrorCode(FileError::NotFound);
+    let permCode: int = getErrorCode(FileError::PermissionDenied);
+    let corruptCode: int = getErrorCode(FileError::CorruptedData);
+
+    assertEq(nfCode, 404);
+    assertEq(permCode, 403);
+    assertEq(corruptCode, 500);
+
+    // 2. zonk error recovery operator
+    let missingPath: string = "/tmp/keet_non_existent_file_987654.txt";
+    let safeContent: string = file.readText(missingPath) zonk "DEFAULT_CONTENT";
+    assertEq(safeContent, "DEFAULT_CONTENT");
+
+    // zonk with numeric fallback
+    let missingSize: int = file.size(missingPath) zonk 0;
+    assertEq(missingSize, 0);
+
+    io.println("KeetScript Errors & Zonk Tests Passed! 🐱");
+}

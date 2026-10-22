@@ -1,0 +1,17 @@
+module TestFramework;
+
+fn main(): void {
+    io.println("Running KeetScript Testing Framework Verification...");
+
+    // Basic assertions
+    assert(true);
+    assert(!false);
+    assert(10 > 5);
+
+    // Equality assertions
+    assertEq(1 + 1, 2);
+    assertEq("keet", "keet");
+    assertEq(42 * 2, 84);
+
+    io.println("KeetScript Framework Verification Passed! 🐱");
+}

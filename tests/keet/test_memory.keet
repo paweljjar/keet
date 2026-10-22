@@ -1,0 +1,17 @@
+module TestMemory;
+
+fn main(): void {
+    io.println("Running KeetScript Memory Tests...");
+
+    // Monotonic arena allocator
+    let arena = mem.arena(1024);
+    assert(arena.totalAllocated() == 0);
+
+    // Verify buffer view and operations
+    let sample: string = "MemoryBuffer";
+    let buf: io.Buffer = io.Buffer(sample.data(), sample.size());
+    assertEq(buf.size(), 12);
+    assertEq(buf.toString(), "MemoryBuffer");
+
+    io.println("KeetScript Memory Tests Passed! 🐱");
+}

@@ -1,0 +1,35 @@
+module TestDatabase;
+
+import cpp from "keet/Database.h" as Database;
+
+fn main(): void {
+    io.println("Running KeetScript Database Engine Tests...");
+
+    // 1. In-memory database initialization
+    let db = cpp.HTTPServer::Database(":memory:");
+    assert(db.isMemory());
+    assertEq(db.getPath(), ":memory:");
+
+    // 2. DDL execution
+    db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, age INTEGER);");
+    assert(db.hasTable("users"));
+
+    // 3. Insert and query
+    db.execute("INSERT INTO users (username, age) VALUES ('alice', 28);");
+    db.execute("INSERT INTO users (username, age) VALUES ('bob', 34);");
+
+    let rows = db.query("SELECT * FROM users ORDER BY age ASC;");
+    assertEq(rows.size(), 2);
+    assertEq(rows[0].asObject().at("username").asString(), "alice");
+    assertEq(rows[1].asObject().at("username").asString(), "bob");
+
+    // 4. Update
+    let updated = db.executeUpdate("UPDATE users SET age = 29 WHERE username = 'alice';");
+    assertEq(updated, 1);
+
+    // 5. Table proxy fluent accessor
+    let usersTable = db.table("users");
+    assertEq(usersTable.count(), 2);
+
+    io.println("KeetScript Database Engine Tests Passed! 🐱");
+}

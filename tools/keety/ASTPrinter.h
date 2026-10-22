@@ -141,6 +141,15 @@ namespace Keety {
                 _out << "\n";
             }
 
+            void visit(const ConstDecl& node) override {
+                _emitIndent();
+                _out << "ConstDecl: " << (node.isExported ? "export " : "") << "const " << node.name << ": " << node.typeName;
+                if (!node.valueExpr.empty()) {
+                    _out << " = " << node.valueExpr;
+                }
+                _out << "\n";
+            }
+
             void visit(const FunctionDecl& node) override {
                 _emitIndent();
                 _out << "FunctionDecl: def " << node.name << "(";

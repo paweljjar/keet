@@ -60,6 +60,7 @@ namespace Keety {
         if (text == "as") return Token(TokenKind::KwAs, text, loc);
         if (text == "state") return Token(TokenKind::KwState, text, loc);
         if (text == "let") return Token(TokenKind::KwLet, text, loc);
+        if (text == "const") return Token(TokenKind::KwConst, text, loc);
         if (text == "def") return Token(TokenKind::KwDef, text, loc);
         if (text == "return") return Token(TokenKind::KwReturn, text, loc);
         if (text == "if") return Token(TokenKind::KwIf, text, loc);
@@ -99,6 +100,22 @@ namespace Keety {
     Token Lexer::_lexNumber() {
         SourceLocation loc = _currentLoc();
         size_t start = _cursor;
+        if (_peek() == '0' && (_peek(1) == 'x' || _peek(1) == 'X')) {
+            _advance(); // '0'
+            _advance(); // 'x'
+            while (!_isAtEnd() && std::isxdigit(static_cast<unsigned char>(_peek()))) {
+                _advance();
+            }
+            return Token(TokenKind::NumberLiteral, _source.substr(start, _cursor - start), loc);
+        }
+        if (_peek() == '0' && (_peek(1) == 'b' || _peek(1) == 'B')) {
+            _advance(); // '0'
+            _advance(); // 'b'
+            while (!_isAtEnd() && (_peek() == '0' || _peek() == '1')) {
+                _advance();
+            }
+            return Token(TokenKind::NumberLiteral, _source.substr(start, _cursor - start), loc);
+        }
         bool hasDot = false;
         while (!_isAtEnd()) {
             char c = _peek();
@@ -260,6 +277,9 @@ namespace Keety {
                 } else if (c == '=') {
                     _advance();
                     tokens.emplace_back(TokenKind::Assign, "=", loc);
+                } else if (c == '?') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::Question, "?", loc);
                 } else {
                     std::string sym(1, _advance());
                     tokens.emplace_back(TokenKind::Invalid, sym, loc);
@@ -348,6 +368,9 @@ namespace Keety {
                 } else if (c == '=') {
                     _advance();
                     tokens.emplace_back(TokenKind::Assign, "=", loc);
+                } else if (c == '?') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::Question, "?", loc);
                 } else {
                     std::string sym(1, _advance());
                     tokens.emplace_back(TokenKind::Invalid, sym, loc);
@@ -448,6 +471,9 @@ namespace Keety {
                 } else if (c == '=') {
                     _advance();
                     tokens.emplace_back(TokenKind::Assign, "=", loc);
+                } else if (c == '?') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::Question, "?", loc);
                 } else {
                     // Single char operator or unrecognized
                     std::string sym(1, _advance());

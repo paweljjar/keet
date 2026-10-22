@@ -221,12 +221,34 @@ namespace keet::lang {
     // Type aliases within keet::lang
     using Buffer = keet::io::BufferView;
     using File = keet::file::File;
+    template <typename T>
+    using array = std::vector<T>;
 
     // Root built-in aliases
     template <typename... Args>
     inline void print(Args&&... args) { keet::io::print(std::forward<Args>(args)...); }
     template <typename... Args>
     inline void println(Args&&... args) { keet::io::println(std::forward<Args>(args)...); }
+
+    // Test assertion helpers for KeetScript
+    inline void assert(bool condition, const std::string& message = "") {
+        if (!condition) {
+            std::string msg = message.empty() ? "KeetScript assertion failed" : ("KeetScript assertion failed: " + message);
+            keet::io::eprintln("[FAIL]", msg);
+            throw std::runtime_error(msg);
+        }
+    }
+
+    template <typename T, typename U>
+    inline void assertEq(const T& actual, const U& expected, const std::string& message = "") {
+        if (actual != expected) {
+            std::ostringstream oss;
+            oss << "Expected equality, but got " << actual << " != " << expected;
+            if (!message.empty()) oss << " (" << message << ")";
+            keet::io::eprintln("[FAIL]", oss.str());
+            throw std::runtime_error(oss.str());
+        }
+    }
 
 } // namespace keet::lang
 

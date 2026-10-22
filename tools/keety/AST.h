@@ -53,6 +53,7 @@ namespace Keety {
     struct ClassMethodDecl;
     struct ClassDecl;
     struct StructDecl;
+    struct ConstDecl;
     struct ErrtypeDecl;
     struct StandaloneFunctionDecl;
     struct PureModule;
@@ -87,6 +88,7 @@ namespace Keety {
             virtual void visit(const ClassMethodDecl& node) = 0;
             virtual void visit(const ClassDecl& node) = 0;
             virtual void visit(const StructDecl& node) = 0;
+            virtual void visit(const ConstDecl& node) = 0;
             virtual void visit(const ErrtypeDecl& node) = 0;
             virtual void visit(const StandaloneFunctionDecl& node) = 0;
             virtual void visit(const PureModule& node) = 0;
@@ -210,6 +212,17 @@ namespace Keety {
         void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
     };
 
+    struct ConstDecl : public ASTNode { // Represents a constant declaration (const PI: float = 3.14159;)
+        std::string name; // Constant identifier
+        std::string typeName = "auto"; // Data type
+        std::string valueExpr; // Initial value expression
+        bool isExported = false; // export const ...
+
+        explicit ConstDecl(SourceLocation l = {}) : ASTNode(std::move(l)) {}
+
+        void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
+    };
+
     struct ParameterDecl { // Helper struct representing a formal parameter in a def function
         std::string name; // Parameter variable name
         std::string typeName; // Parameter type annotation
@@ -230,6 +243,7 @@ namespace Keety {
         std::vector<std::shared_ptr<ImportCppDecl>> imports; // External C++ header bridge imports
         std::vector<std::shared_ptr<StateDecl>> stateDecls; // Reactive state variables
         std::vector<std::shared_ptr<LetDecl>> letDecls; // Props and local constants
+        std::vector<std::shared_ptr<ConstDecl>> constants; // Immutable constants
         std::vector<std::shared_ptr<FunctionDecl>> functions; // Component methods
         std::vector<std::shared_ptr<ErrtypeDecl>> errtypes; // Error type definitions
 
@@ -471,6 +485,7 @@ namespace Keety {
         std::vector<std::shared_ptr<ImportCppDecl>> imports; // C++ header imports
         std::vector<std::shared_ptr<ClassDecl>> classes; // Class declarations
         std::vector<std::shared_ptr<StructDecl>> structs; // Struct declarations
+        std::vector<std::shared_ptr<ConstDecl>> constants; // Constant declarations
         std::vector<std::shared_ptr<ErrtypeDecl>> errtypes; // Error type enum declarations
         std::vector<std::shared_ptr<StandaloneFunctionDecl>> functions; // Top-level functions
 

@@ -50,6 +50,7 @@ namespace Keety {
         Semicolon, // ;
         Comma, // ,
         Dot, // .
+        Question, // ?
         Arrow, // ->
         FatArrow, // =>
         Assign, // =
@@ -63,6 +64,7 @@ namespace Keety {
         KwAs, // as
         KwState, // state
         KwLet, // let
+        KwConst, // const
         KwDef, // def
         KwReturn, // return
         KwIf, // if
@@ -169,6 +171,7 @@ namespace Keety {
                 case TokenKind::Semicolon: return ";";
                 case TokenKind::Comma: return ",";
                 case TokenKind::Dot: return ".";
+                case TokenKind::Question: return "?";
                 case TokenKind::Arrow: return "->";
                 case TokenKind::FatArrow: return "=>";
                 case TokenKind::Assign: return "=";
@@ -180,6 +183,7 @@ namespace Keety {
                 case TokenKind::KwAs: return "as";
                 case TokenKind::KwState: return "state";
                 case TokenKind::KwLet: return "let";
+                case TokenKind::KwConst: return "const";
                 case TokenKind::KwDef: return "def";
                 case TokenKind::KwReturn: return "return";
                 case TokenKind::KwIf: return "if";

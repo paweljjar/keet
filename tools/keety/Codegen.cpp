@@ -17,8 +17,9 @@ namespace Keety {
         if (typeName == "bool") return "bool";
         if (typeName == "void") return "void";
         if (typeName.empty()) return "void";
-        if (typeName == "vector<string>") return "std::vector<std::string>";
+        if (typeName == "vector<string>" || typeName == "array<string>") return "std::vector<std::string>";
         if (typeName.rfind("vector<", 0) == 0) return "std::" + typeName;
+        if (typeName.rfind("array<", 0) == 0) return "std::vector<" + _mapType(typeName.substr(6, typeName.size() - 7)) + ">";
         if (typeName == "io::Buffer" || typeName == "io.Buffer" || typeName == "Buffer") return "keet::io::BufferView";
         if (typeName == "file::File" || typeName == "file.File" || typeName == "File") return "keet::file::File";
         return typeName;
@@ -664,7 +665,8 @@ namespace Keety {
             os << "    using keet::Vector;\n";
             os << "    using keet::HashMap;\n";
             os << "    using Buffer = keet::io::BufferView;\n";
-            os << "    using File = keet::file::File;\n\n";
+            os << "    using File = keet::file::File;\n";
+            os << "    template <typename T> using array = std::vector<T>;\n\n";
         } else {
             os << "using namespace keet::lang;\n";
             os << "using keet::String;\n";
@@ -672,7 +674,21 @@ namespace Keety {
             os << "using keet::Vector;\n";
             os << "using keet::HashMap;\n";
             os << "using Buffer = keet::io::BufferView;\n";
-            os << "using File = keet::file::File;\n\n";
+            os << "using File = keet::file::File;\n";
+            os << "template <typename T> using array = std::vector<T>;\n\n";
+        }
+
+        // Constants (const and export const)
+        for (const auto& cnst : mod.constants) {
+            std::string t = _mapType(cnst->typeName);
+            if (t == "auto") {
+                os << "    inline const auto " << cnst->name << " = " << cnst->valueExpr << ";\n";
+            } else {
+                os << "    inline const " << t << " " << cnst->name << " = " << cnst->valueExpr << ";\n";
+            }
+        }
+        if (!mod.constants.empty()) {
+            os << "\n";
         }
 
         // Struct definitions
