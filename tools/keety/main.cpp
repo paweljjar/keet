@@ -14,6 +14,7 @@
 #include "BorrowChecker.h"
 #include "Codegen.h"
 #include "Diagnostic.h"
+#include "KIR.h"
 #include "Lexer.h"
 #include "Parser.h"
 
@@ -30,6 +31,7 @@ namespace {
                   << "      --app                     Generate standalone application entry point with main()\n"
                   << "      --lib                     Compile pure KeetScript module into C++20 library\n"
                   << "      --lint                    Perform lexical & syntactic check without emitting code\n"
+                  << "      --emit-kir                Print textual K-IR (Intermediate Representation) to stdout\n"
                   << "      --help                    Display this help message and exit\n";
     }
 
@@ -54,6 +56,7 @@ int main(int argc, char* argv[]) {
     bool lintOnly = false;
     bool appMode = false;
     bool libMode = false;
+    bool emitKir = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -62,6 +65,8 @@ int main(int argc, char* argv[]) {
             return 0;
         } else if (arg == "--lint") {
             lintOnly = true;
+        } else if (arg == "--emit-kir") {
+            emitKir = true;
         } else if (arg == "--app") {
             appMode = true;
         } else if (arg == "--lib") {
@@ -120,6 +125,13 @@ int main(int argc, char* argv[]) {
         // Step 2.5: Compile-Time Memory Safety (Borrow Checker)
         Keety::BorrowChecker borrowChecker;
         borrowChecker.checkOrThrow(*ast, source);
+
+        if (emitKir) {
+            Keety::KIRBuilder kirBuilder;
+            auto kirMod = kirBuilder.build(*ast);
+            std::cout << kirMod->print();
+            return 0;
+        }
 
         if (lintOnly) {
             if (ast->isPureModule) {

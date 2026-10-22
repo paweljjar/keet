@@ -1,0 +1,72 @@
+module TestKIR;
+
+export struct KIRNode {
+    id: int,
+    label: string,
+    active: bool = true
+}
+
+fn calculateSum(a: int, b: int): int {
+    let mut total: int = a + b;
+    return total;
+}
+
+fn determineLevel(score: int): string {
+    let mut level: string = "Junior";
+    if score >= 90 {
+        level = "Senior";
+    } else {
+        level = "Mid";
+    }
+    return level;
+}
+
+fn inspectString(s: &string): int {
+    return s.size();
+}
+
+fn modifyString(s: &mut string, suffix: string): void {
+    s = s + suffix;
+}
+
+fn passOwnership(move s: string): string {
+    return move s;
+}
+
+fn main(): void {
+    io.println("Running KeetScript K-IR Lowering & Pipeline Tests...");
+
+    // 1. Math and local allocation
+    let sum: int = calculateSum(15, 27);
+    assertEq(sum, 42);
+
+    // 2. Control flow branching
+    let lvl1: string = determineLevel(95);
+    assertEq(lvl1, "Senior");
+    let lvl2: string = determineLevel(75);
+    assertEq(lvl2, "Mid");
+
+    // 3. Struct definition and property values
+    let node = KIRNode {
+        id: 101,
+        label: "CFG_Node_1"
+    };
+    assertEq(node.id, 101);
+    assertEq(node.label, "CFG_Node_1");
+    assert(node.active);
+
+    // 4. Reference borrows and mutations
+    let mut text: string = "K-IR";
+    let len: int = inspectString(&text);
+    assertEq(len, 4);
+
+    modifyString(&mut text, " Pipeline");
+    assertEq(text, "K-IR Pipeline");
+
+    // 5. Move semantics and ownership
+    let original: string = "ZeroOverhead";
+    let movedVal: string = passOwnership(move original);
+    assertEq(movedVal, "ZeroOverhead");
+
+    io.println("KeetScript K-IR Lowering & Pipeline Tests Passed! 🐱");
+}

@@ -10,6 +10,7 @@
 #include "ASTPrinter.h"
 #include "BorrowChecker.h"
 #include "Diagnostic.h"
+#include "KIR.h"
 #include "Lexer.h"
 #include "Parser.h"
 #include "Codegen.h"
@@ -738,6 +739,38 @@ fn broken(b: &Buffer): void {
     assert(checker6.getDiagnostics()[0].code == ErrorCode::E0506_CannotMoveBorrowed);
 
     std::cout << "Feature 9 Phase 2 (BorrowChecker Engine & All 6 Memory Safety Rules) verification passed! 🐱" << std::endl;
+
+    // =========================================================================
+    // Feature 9: Phase 3 - K-IR Intermediate Representation Verification
+    // =========================================================================
+    KIRBuilder kirBuilder;
+    auto kirMod = kirBuilder.build(*parsedBorrow);
+    assert(kirMod != nullptr);
+    assert(kirMod->name == "MemorySafety");
+    assert(kirMod->functions.size() == 4);
+
+    // Verify K-IR Text Printer
+    std::string kirText = kirMod->print();
+    assert(kirText.find("; K-IR Module: MemorySafety") != std::string::npos);
+    assert(kirText.find("fn readBuffer(") != std::string::npos);
+    assert(kirText.find("fn mutateBuffer(") != std::string::npos);
+    assert(kirText.find("fn takeBuffer(") != std::string::npos);
+    assert(kirText.find("fn main(): void") != std::string::npos);
+    assert(kirText.find("entry:") != std::string::npos);
+
+    // Verify K-IR Binary Serialization Round-Trip
+    auto kirBinary = kirMod->toBinary();
+    assert(!kirBinary.empty());
+    assert(kirBinary.size() > 4);
+    assert(kirBinary[0] == 'K' && kirBinary[1] == 'I' && kirBinary[2] == 'R' && kirBinary[3] == 0x01);
+
+    auto restoredKirMod = KIRModule::fromBinary(kirBinary);
+    assert(restoredKirMod != nullptr);
+    assert(restoredKirMod->name == kirMod->name);
+    assert(restoredKirMod->functions.size() == kirMod->functions.size());
+    assert(restoredKirMod->print() == kirMod->print());
+
+    std::cout << "Feature 9 Phase 3 (K-IR Intermediate Representation & Serialization) verification passed! 🐱" << std::endl;
 
     std::cout << "All Phase 1, Phase 2, & Phase 3 AST, Parser & Codegen assertions passed successfully! 🐱" << std::endl;
     return 0;

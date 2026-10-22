@@ -359,7 +359,18 @@ namespace Keety {
 
                 if (cursor < bodyTokens.size() && bodyTokens[cursor].is(TokenKind::Assign)) {
                     cursor++; // skip '='
-                    checkExpression(cursor, varName);
+                    bool isRefBinding = ann.isReference();
+                    if (!isRefBinding && (ann.baseType == "auto" || ann.baseType.empty())) {
+                        if (cursor < bodyTokens.size() && bodyTokens[cursor].is(TokenKind::Ampersand)) {
+                            if (cursor + 1 < bodyTokens.size() && bodyTokens[cursor + 1].is(TokenKind::Identifier)) {
+                                isRefBinding = true;
+                            } else if (cursor + 2 < bodyTokens.size() && bodyTokens[cursor + 1].is(TokenKind::KwMut) &&
+                                       bodyTokens[cursor + 2].is(TokenKind::Identifier)) {
+                                isRefBinding = true;
+                            }
+                        }
+                    }
+                    checkExpression(cursor, isRefBinding ? varName : "");
                 }
                 continue;
             }

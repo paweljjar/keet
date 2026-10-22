@@ -89,6 +89,7 @@ add_executable(keety
         tools/keety/Parser.cpp
         tools/keety/Codegen.cpp
         tools/keety/BorrowChecker.cpp
+        tools/keety/KIR.cpp
 )
 target_include_directories(keety PRIVATE tools/keety)
 
@@ -106,6 +107,7 @@ add_executable(keety_test_ast
         tools/keety/Parser.cpp
         tools/keety/Codegen.cpp
         tools/keety/BorrowChecker.cpp
+        tools/keety/KIR.cpp
 )
 target_include_directories(keety_test_ast PRIVATE tools/keety)
 add_test(NAME keety_test_ast COMMAND keety_test_ast)
@@ -160,8 +162,19 @@ keet_add_test(test_cpp_borrow_checker tests/cpp/test_borrow_checker.cpp
         tools/keety/Parser.cpp
         tools/keety/Codegen.cpp
         tools/keety/BorrowChecker.cpp
+        tools/keety/KIR.cpp
 )
 target_include_directories(test_cpp_borrow_checker PRIVATE tools/keety)
+
+# KeetScript Intermediate Representation (K-IR) C++ unit test
+keet_add_test(test_cpp_kir tests/cpp/test_kir.cpp
+        tools/keety/Lexer.cpp
+        tools/keety/Parser.cpp
+        tools/keety/Codegen.cpp
+        tools/keety/BorrowChecker.cpp
+        tools/keety/KIR.cpp
+)
+target_include_directories(test_cpp_kir PRIVATE tools/keety)
 
 # =============================================================================
 # KeetScript Test Suite (tests/keet)
@@ -222,3 +235,7 @@ add_test(NAME test_keet_errors COMMAND test_keet_errors)
 # KeetScript native test: Compile-Time Memory Safety & Borrow Checker
 keet_add_executable(test_keet_borrow_checker tests/keet/test_borrow_checker.keet)
 add_test(NAME test_keet_borrow_checker COMMAND test_keet_borrow_checker)
+
+# KeetScript native test: K-IR Lowering & Execution Pipeline
+keet_add_executable(test_keet_kir tests/keet/test_kir.keet)
+add_test(NAME test_keet_kir COMMAND test_keet_kir)
