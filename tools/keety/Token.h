@@ -56,6 +56,9 @@ namespace Keety {
         Assign, // =
         PlusAssign, // +=
         MinusAssign, // -=
+        Ampersand, // &
+        Star, // *
+        Lifetime, // 'a, 'static, etc.
 
         // Keywords
         KwImport, // import
@@ -101,6 +104,8 @@ namespace Keety {
         KwPrint, // print
         KwErrtype, // errtype
         KwZonk, // zonk
+        KwMove, // move
+        KwMut, // mut
 
         // Literals and identifiers
         Identifier, // Alphanumeric identifier (e.g., count, onClick, title)
@@ -142,7 +147,9 @@ namespace Keety {
                    kind == TokenKind::KwStruct || kind == TokenKind::KwPublic ||
                    kind == TokenKind::KwPrivate || kind == TokenKind::KwProtected ||
                    kind == TokenKind::KwModule || kind == TokenKind::KwThis ||
-                   kind == TokenKind::KwPrint;
+                   kind == TokenKind::KwPrint || kind == TokenKind::KwErrtype ||
+                   kind == TokenKind::KwZonk || kind == TokenKind::KwMove ||
+                   kind == TokenKind::KwMut;
         }
 
         [[nodiscard]] static std::string_view kindToString(TokenKind k) { // Human-readable description for debugging and parser error messages
@@ -216,6 +223,11 @@ namespace Keety {
                 case TokenKind::KwPrint: return "print";
                 case TokenKind::KwErrtype: return "errtype";
                 case TokenKind::KwZonk: return "zonk";
+                case TokenKind::KwMove: return "move";
+                case TokenKind::KwMut: return "mut";
+                case TokenKind::Ampersand: return "&";
+                case TokenKind::Star: return "*";
+                case TokenKind::Lifetime: return "lifetime";
                 case TokenKind::Identifier: return "identifier";
                 case TokenKind::StringLiteral: return "string literal";
                 case TokenKind::NumberLiteral: return "number literal";

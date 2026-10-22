@@ -1,0 +1,62 @@
+module TestErgonomics;
+
+struct Item {
+    id: int;
+    name: string;
+    price: int;
+}
+
+fn createItem(id: int, name: string, price: int): Item {
+    return Item{id: id, name: name, price: price};
+}
+
+fn applyDiscount(it: Item, discount: int): Item {
+    let finalPrice: int = it.price - discount;
+    return Item{id: it.id, name: it.name, price: finalPrice};
+}
+
+fn calculateVolume(length: int, width: int, height: int): int {
+    // Verifies binary multiplication operator '*' is fully supported and works smoothly
+    let baseArea: int = length * width;
+    return baseArea * height;
+}
+
+fn main(): void {
+    io.println("Running KeetScript Everyday Ergonomics & Value Semantics Tests...");
+
+    // 1. Struct creation with clean value semantics (no raw pointers)
+    let item1: Item = createItem(101, "KeetKeyboard", 150);
+    assertEq(item1.id, 101);
+    assertEq(item1.name, "KeetKeyboard");
+    assertEq(item1.price, 150);
+
+    // 2. Value transformation and passing (no borrow-checker overhead for everyday code)
+    let discounted: Item = applyDiscount(item1, 30);
+    assertEq(discounted.price, 120);
+    // Original item is still fully valid and untouched (value semantics)
+    assertEq(item1.price, 150);
+
+    // 3. Dot notation member access exclusively (no '->')
+    let itName: string = discounted.name;
+    assertEq(itName, "KeetKeyboard");
+
+    // 4. Arithmetic multiplication expressions
+    let vol: int = calculateVolume(3, 4, 5);
+    assertEq(vol, 60);
+
+    let scaled: int = 10 * 2 * 3;
+    assertEq(scaled, 60);
+
+    // 5. Clean string manipulation and re-assignment
+    let mut greeting: string = "Everyday";
+    greeting = greeting + " KeetScript";
+    assertEq(greeting, "Everyday KeetScript");
+
+    // 6. Array literals and element access
+    let labels: array<string> = ["alpha", "beta", "gamma"];
+    assertEq(labels[0], "alpha");
+    assertEq(labels[1], "beta");
+    assertEq(labels[2], "gamma");
+
+    io.println("KeetScript Everyday Ergonomics Tests Passed! 🐱");
+}

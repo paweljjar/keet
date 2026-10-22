@@ -24,7 +24,7 @@ function(keet_target_sources TARGET_NAME SCOPE)
         # Set up Ahead-of-Time custom build command
         add_custom_command(
             OUTPUT "${OUT_CPP}" "${OUT_H}"
-            COMMAND keety -i "${KEET_ABS}" -o "${OUT_CPP}" -h "${OUT_H}" -c "${FILE_NAME}"
+            COMMAND keety --incremental -i "${KEET_ABS}" -o "${OUT_CPP}" -h "${OUT_H}" -c "${FILE_NAME}"
             DEPENDS "${KEET_ABS}" keety
             COMMENT "keety: transpiling ${KEET_FILE} -> ${OUT_CPP} & ${OUT_H} 🐱"
             VERBATIM
@@ -55,7 +55,7 @@ function(keet_add_application TARGET_NAME MAIN_KEET_FILE)
 
     add_custom_command(
         OUTPUT "${OUT_CPP}" "${OUT_H}"
-        COMMAND keety --app -i "${KEET_ABS}" -o "${OUT_CPP}" -h "${OUT_H}" -c "${FILE_NAME}"
+        COMMAND keety --incremental --app -i "${KEET_ABS}" -o "${OUT_CPP}" -h "${OUT_H}" -c "${FILE_NAME}"
         DEPENDS "${KEET_ABS}" keety
         COMMENT "keety: compiling full-stack application ${MAIN_KEET_FILE} -> ${TARGET_NAME}"
         VERBATIM
@@ -85,7 +85,7 @@ function(keet_add_library TARGET_NAME)
 
         add_custom_command(
             OUTPUT "${OUT_CPP}" "${OUT_H}"
-            COMMAND keety --lib -i "${KEET_ABS}" -o "${OUT_CPP}" -h "${OUT_H}" -c "${FILE_NAME}"
+            COMMAND keety --incremental --lib -i "${KEET_ABS}" -o "${OUT_CPP}" -h "${OUT_H}" -c "${FILE_NAME}"
             DEPENDS "${KEET_ABS}" keety
             COMMENT "keety: compiling library module ${KEET_FILE} -> ${OUT_CPP} & ${OUT_H} 🐱"
             VERBATIM
@@ -117,7 +117,7 @@ function(keet_add_executable TARGET_NAME MAIN_KEET_FILE)
 
     add_custom_command(
         OUTPUT "${OUT_CPP}" "${OUT_H}"
-        COMMAND keety -i "${KEET_ABS}" -o "${OUT_CPP}" -h "${OUT_H}" -c "${FILE_NAME}"
+        COMMAND keety --incremental -i "${KEET_ABS}" -o "${OUT_CPP}" -h "${OUT_H}" -c "${FILE_NAME}"
         DEPENDS "${KEET_ABS}" keety
         COMMENT "keety: compiling standalone executable ${MAIN_KEET_FILE} -> ${TARGET_NAME} 🐱"
         VERBATIM

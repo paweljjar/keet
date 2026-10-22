@@ -11,7 +11,11 @@
 #include <vector>
 
 #include "AST.h"
+#include "BorrowChecker.h"
 #include "Codegen.h"
+#include "Diagnostic.h"
+#include "IncrementalCache.h"
+#include "KIR.h"
 #include "Lexer.h"
 #include "Parser.h"
 
@@ -28,6 +32,11 @@ namespace {
                   << "      --app                     Generate standalone application entry point with main()\n"
                   << "      --lib                     Compile pure KeetScript module into C++20 library\n"
                   << "      --lint                    Perform lexical & syntactic check without emitting code\n"
+                  << "      --emit-kir                Print textual K-IR (Intermediate Representation) to stdout\n"
+                  << "      --incremental             Enable fast incremental compilation via K-IR disk cache\n"
+                  << "      --systems                 Enable strict borrow checker enforcement for systems modules\n"
+                  << "      --cache-dir <path>        Custom K-IR cache directory (default: .cattery/cache/kir)\n"
+                  << "      --clear-cache             Clear the incremental compilation cache and exit\n"
                   << "      --help                    Display this help message and exit\n";
     }
 
@@ -52,6 +61,11 @@ int main(int argc, char* argv[]) {
     bool lintOnly = false;
     bool appMode = false;
     bool libMode = false;
+    bool emitKir = false;
+    bool incrementalMode = false;
+    bool systemsMode = false;
+    bool clearCache = false;
+    std::string cacheDir = ".cattery/cache/kir";
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -60,6 +74,16 @@ int main(int argc, char* argv[]) {
             return 0;
         } else if (arg == "--lint") {
             lintOnly = true;
+        } else if (arg == "--emit-kir") {
+            emitKir = true;
+        } else if (arg == "--incremental") {
+            incrementalMode = true;
+        } else if (arg == "--systems" || arg == "--strict-borrows") {
+            systemsMode = true;
+        } else if (arg == "--clear-cache") {
+            clearCache = true;
+        } else if (arg == "--cache-dir" && i + 1 < argc) {
+            cacheDir = argv[++i];
         } else if (arg == "--app") {
             appMode = true;
         } else if (arg == "--lib") {
@@ -81,10 +105,47 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    if (clearCache) {
+        Keety::IncrementalCache cache(cacheDir);
+        cache.clear();
+        std::cout << "keety: cache cleared (" << cacheDir << ") ⚡\n";
+        return 0;
+    }
+
     if (inputFile.empty()) {
         std::cerr << "keety: error: no input .keet file specified\n";
         printHelp();
         return 1;
+    }
+
+    if (componentName.empty()) {
+        componentName = deriveComponentName(inputFile);
+    }
+
+    Keety::IncrementalCache cache(cacheDir);
+
+    if (incrementalMode && cache.isFresh(inputFile)) {
+        if (emitKir) {
+            auto cachedMod = cache.loadKIR(inputFile);
+            if (cachedMod) {
+                std::cout << cachedMod->print();
+                return 0;
+            }
+        } else if (lintOnly) {
+            std::cout << "keety: " << inputFile << ": Syntax & Safety OK [Cached: " << componentName << "] ⚡\n";
+            return 0;
+        } else if (!outputSourceFile.empty() && !outputHeaderFile.empty() &&
+                   std::filesystem::exists(outputSourceFile) && std::filesystem::exists(outputHeaderFile)) {
+            try {
+                auto inTime = std::filesystem::last_write_time(inputFile);
+                auto srcTime = std::filesystem::last_write_time(outputSourceFile);
+                auto hdrTime = std::filesystem::last_write_time(outputHeaderFile);
+                if (srcTime >= inTime && hdrTime >= inTime) {
+                    std::cout << "keety: [cached] " << inputFile << " -> " << outputHeaderFile << " & " << outputSourceFile << " ⚡\n";
+                    return 0;
+                }
+            } catch (...) {}
+        }
     }
 
     std::ifstream inFile(inputFile);
@@ -98,10 +159,6 @@ int main(int argc, char* argv[]) {
     std::string source = buffer.str();
     inFile.close();
 
-    if (componentName.empty()) {
-        componentName = deriveComponentName(inputFile);
-    }
-
     try {
         // Step 1: Lexical analysis
         Keety::Lexer lexer(source, inputFile);
@@ -113,6 +170,30 @@ int main(int argc, char* argv[]) {
 
         if (libMode) {
             ast->isPureModule = true;
+        }
+
+        // Step 2.5: Compile-Time Memory Safety (Borrow Checker)
+        // Phase 5.5: Isolate borrow checker to expert/systems modules or explicit --systems flag
+        bool shouldBorrowCheck = systemsMode || ast->isSystemsMode;
+        if (shouldBorrowCheck && (!incrementalMode || !cache.isFresh(inputFile))) {
+            Keety::BorrowChecker borrowChecker;
+            borrowChecker.checkOrThrow(*ast, source);
+        }
+
+        // Step 2.6: K-IR Intermediate Representation
+        Keety::KIRBuilder kirBuilder;
+        auto kirMod = kirBuilder.build(*ast);
+
+        if (incrementalMode) {
+            std::filesystem::path inputPath(inputFile);
+            std::string sourceDir = inputPath.has_parent_path() ? inputPath.parent_path().string() : ".";
+            auto deps = Keety::DependencyGraph::extractDependencies(*ast, sourceDir);
+            cache.saveKIR(inputFile, *kirMod, deps);
+        }
+
+        if (emitKir) {
+            std::cout << kirMod->print();
+            return 0;
         }
 
         if (lintOnly) {
@@ -165,6 +246,9 @@ int main(int argc, char* argv[]) {
         std::cout << "keety: compiled " << inputFile << " -> " << outputHeaderFile << " & " << outputSourceFile << " 🐱\n";
         return 0;
 
+    } catch (const Keety::DiagnosticException& de) {
+        std::cerr << de.what() << "\n";
+        return 1;
     } catch (const Keety::LexerException& le) {
         std::cerr << le.what() << "\n";
         return 1;

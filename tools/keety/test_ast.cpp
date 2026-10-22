@@ -4,10 +4,16 @@
 //
 
 #include <iostream>
+#include <fstream>
 #include <cassert>
+#include <filesystem>
 #include "Token.h"
 #include "AST.h"
 #include "ASTPrinter.h"
+#include "BorrowChecker.h"
+#include "Diagnostic.h"
+#include "IncrementalCache.h"
+#include "KIR.h"
 #include "Lexer.h"
 #include "Parser.h"
 #include "Codegen.h"
@@ -515,6 +521,367 @@ fn main(): void {
 
     std::cout << "Standalone KeetScript C++20 Codegen verification passed! 🐱" << std::endl;
 
-    std::cout << "All Phase 1, Phase 2, & Phase 3 AST, Parser & Codegen assertions passed successfully! 🐱" << std::endl;
+    // =========================================================================
+    // Feature 9: Phase 1 - Borrowing & Ownership Grammar & Diagnostic Tests
+    // =========================================================================
+    std::string borrowCode = R"(
+module MemorySafety;
+
+fn readBuffer(buf: &Buffer): int {
+    return buf.size();
+}
+
+fn mutateBuffer(buf: &mut Buffer, val: string): void {
+    buf.append(val);
+}
+
+fn takeBuffer(move buf: Buffer): Buffer {
+    return move buf;
+}
+
+fn main(): void {
+    let mut b: Buffer = Buffer{};
+    {
+        let r: &Buffer = &b;
+    }
+    {
+        let rmut: &mut Buffer = &mut b;
+    }
+    let movedB = move b;
+}
+)";
+
+    Lexer borrowLexer(borrowCode, "MemorySafety.keet");
+    auto borrowTokens = borrowLexer.tokenize();
+    
+    // Check tokens
+    bool foundAmpersand = false;
+    bool foundKwMut = false;
+    bool foundKwMove = false;
+    for (const auto& tok : borrowTokens) {
+        if (tok.is(TokenKind::Ampersand)) foundAmpersand = true;
+        if (tok.is(TokenKind::KwMut)) foundKwMut = true;
+        if (tok.is(TokenKind::KwMove)) foundKwMove = true;
+    }
+    assert(foundAmpersand);
+    assert(foundKwMut);
+    assert(foundKwMove);
+
+    Parser borrowParser(borrowTokens, "MemorySafety");
+    auto parsedBorrow = borrowParser.parse();
+    assert(parsedBorrow->isPureModule);
+    assert(parsedBorrow->moduleBlock->functions.size() == 4);
+
+    auto fRead = parsedBorrow->moduleBlock->functions[0];
+    assert(fRead->name == "readBuffer");
+    assert(fRead->parameters.size() == 1);
+    assert(fRead->parameters[0].name == "buf");
+    assert(fRead->parameters[0].refKind == ReferenceKind::ImmutableRef);
+
+    auto fMut = parsedBorrow->moduleBlock->functions[1];
+    assert(fMut->name == "mutateBuffer");
+    assert(fMut->parameters.size() == 2);
+    assert(fMut->parameters[0].name == "buf");
+    assert(fMut->parameters[0].refKind == ReferenceKind::MutableRef);
+
+    auto fTake = parsedBorrow->moduleBlock->functions[2];
+    assert(fTake->name == "takeBuffer");
+    assert(fTake->parameters.size() == 1);
+    assert(fTake->parameters[0].isMove);
+
+    // Verify Codegen emits proper C++ references & std::move
+    Codegen borrowCodegen(*parsedBorrow, "MemorySafety.h");
+    GeneratedCode borrowGen = borrowCodegen.generate();
+    assert(borrowGen.headerCode.find("int readBuffer(const keet::io::BufferView& buf);") != std::string::npos);
+    assert(borrowGen.headerCode.find("void mutateBuffer(keet::io::BufferView& buf, std::string val);") != std::string::npos);
+    assert(borrowGen.sourceCode.find("std::move(b)") != std::string::npos);
+
+    // Test TypeAnnotation
+    auto immAnn = TypeAnnotation::parse("&Buffer");
+    assert(immAnn.isImmutableRef());
+    assert(immAnn.baseType == "Buffer");
+
+    auto mutAnn = TypeAnnotation::parse("&mut string");
+    assert(mutAnn.isMutableRef());
+    assert(mutAnn.baseType == "string");
+
+    auto lifeAnn = TypeAnnotation::parse("&'a mut Buffer");
+    assert(lifeAnn.isMutableRef());
+    assert(lifeAnn.lifetime == "'a");
+    assert(lifeAnn.baseType == "Buffer");
+
+    // Test Diagnostic Formatter
+    SourceLocation diagLoc{"test.keet", 2, 5};
+    Diagnostic diag(ErrorCode::E0501_UseOfMovedValue, "use of moved value 'buf'", diagLoc, 3, "value used here after move");
+    diag.withHelp("value was moved earlier. Consider borrowing instead: '&buf'");
+    std::string diagFormatted = diag.format("let a = 1;\n    buf.size();\n");
+    assert(diagFormatted.find("error[E0501]: use of moved value 'buf'") != std::string::npos);
+    assert(diagFormatted.find("--> test.keet:2:5") != std::string::npos);
+    assert(diagFormatted.find("^^^ value used here after move") != std::string::npos);
+    assert(diagFormatted.find("help: value was moved earlier. Consider borrowing instead: '&buf'") != std::string::npos);
+
+    std::cout << "Feature 9 Phase 1 (Tokens, AST, References, Moves & Diagnostics) verification passed! 🐱" << std::endl;
+
+    // =========================================================================
+    // Feature 9: Phase 2 - Compile-Time Borrow Checker Engine Tests
+    // =========================================================================
+    BorrowChecker checker;
+    bool checkedOk = checker.check(*parsedBorrow, borrowCode);
+    assert(checkedOk);
+    assert(checker.getDiagnostics().empty());
+
+    // Test E0501: Use of moved value
+    std::string errCode1 = R"(
+module ErrTest1;
+fn broken(): void {
+    let mut b: Buffer = Buffer{};
+    let movedB = move b;
+    b.size();
+}
+)";
+    Lexer errLexer1(errCode1, "ErrTest1.keet");
+    auto errTokens1 = errLexer1.tokenize();
+    Parser errParser1(errTokens1, "ErrTest1");
+    auto errAst1 = errParser1.parse();
+    BorrowChecker checker1;
+    bool checked1 = checker1.check(*errAst1, errCode1);
+    assert(!checked1);
+    assert(checker1.getDiagnostics().size() == 1);
+    assert(checker1.getDiagnostics()[0].code == ErrorCode::E0501_UseOfMovedValue);
+
+    // Test E0502: Borrow conflict (mutable borrow while immutably borrowed)
+    std::string errCode2 = R"(
+module ErrTest2;
+fn broken(): void {
+    let mut b: Buffer = Buffer{};
+    let r: &Buffer = &b;
+    let rmut: &mut Buffer = &mut b;
+}
+)";
+    Lexer errLexer2(errCode2, "ErrTest2.keet");
+    auto errTokens2 = errLexer2.tokenize();
+    Parser errParser2(errTokens2, "ErrTest2");
+    auto errAst2 = errParser2.parse();
+    BorrowChecker checker2;
+    bool checked2 = checker2.check(*errAst2, errCode2);
+    assert(!checked2);
+    assert(checker2.getDiagnostics().size() == 1);
+    assert(checker2.getDiagnostics()[0].code == ErrorCode::E0502_BorrowConflict);
+
+    // Test E0503: Multiple mutable borrows
+    std::string errCode3 = R"(
+module ErrTest3;
+fn broken(): void {
+    let mut b: Buffer = Buffer{};
+    let r1: &mut Buffer = &mut b;
+    let r2: &mut Buffer = &mut b;
+}
+)";
+    Lexer errLexer3(errCode3, "ErrTest3.keet");
+    auto errTokens3 = errLexer3.tokenize();
+    Parser errParser3(errTokens3, "ErrTest3");
+    auto errAst3 = errParser3.parse();
+    BorrowChecker checker3;
+    bool checked3 = checker3.check(*errAst3, errCode3);
+    assert(!checked3);
+    assert(checker3.getDiagnostics().size() == 1);
+    assert(checker3.getDiagnostics()[0].code == ErrorCode::E0503_MultipleMutableBorrows);
+
+    // Test E0504: Mutation during borrow
+    std::string errCode4 = R"(
+module ErrTest4;
+fn broken(): void {
+    let mut b: Buffer = Buffer{};
+    let r: &Buffer = &b;
+    b = Buffer{};
+}
+)";
+    Lexer errLexer4(errCode4, "ErrTest4.keet");
+    auto errTokens4 = errLexer4.tokenize();
+    Parser errParser4(errTokens4, "ErrTest4");
+    auto errAst4 = errParser4.parse();
+    BorrowChecker checker4;
+    bool checked4 = checker4.check(*errAst4, errCode4);
+    assert(!checked4);
+    assert(checker4.getDiagnostics().size() == 1);
+    assert(checker4.getDiagnostics()[0].code == ErrorCode::E0504_MutationDuringBorrow);
+
+    // Test E0505: Dangling reference to local
+    std::string errCode5 = R"(
+module ErrTest5;
+fn broken(): &Buffer {
+    let b: Buffer = Buffer{};
+    return &b;
+}
+)";
+    Lexer errLexer5(errCode5, "ErrTest5.keet");
+    auto errTokens5 = errLexer5.tokenize();
+    Parser errParser5(errTokens5, "ErrTest5");
+    auto errAst5 = errParser5.parse();
+    BorrowChecker checker5;
+    bool checked5 = checker5.check(*errAst5, errCode5);
+    assert(!checked5);
+    assert(checker5.getDiagnostics().size() == 1);
+    assert(checker5.getDiagnostics()[0].code == ErrorCode::E0505_DanglingReference);
+
+    // Test E0506: Move out of borrowed reference
+    std::string errCode6 = R"(
+module ErrTest6;
+fn broken(b: &Buffer): void {
+    let x = move b;
+}
+)";
+    Lexer errLexer6(errCode6, "ErrTest6.keet");
+    auto errTokens6 = errLexer6.tokenize();
+    Parser errParser6(errTokens6, "ErrTest6");
+    auto errAst6 = errParser6.parse();
+    BorrowChecker checker6;
+    bool checked6 = checker6.check(*errAst6, errCode6);
+    assert(!checked6);
+    assert(checker6.getDiagnostics().size() == 1);
+    assert(checker6.getDiagnostics()[0].code == ErrorCode::E0506_CannotMoveBorrowed);
+
+    std::cout << "Feature 9 Phase 2 (BorrowChecker Engine & All 6 Memory Safety Rules) verification passed! 🐱" << std::endl;
+
+    // =========================================================================
+    // Feature 9: Phase 3 - K-IR Intermediate Representation Verification
+    // =========================================================================
+    KIRBuilder kirBuilder;
+    auto kirMod = kirBuilder.build(*parsedBorrow);
+    assert(kirMod != nullptr);
+    assert(kirMod->name == "MemorySafety");
+    assert(kirMod->functions.size() == 4);
+
+    // Verify K-IR Text Printer
+    std::string kirText = kirMod->print();
+    assert(kirText.find("; K-IR Module: MemorySafety") != std::string::npos);
+    assert(kirText.find("fn readBuffer(") != std::string::npos);
+    assert(kirText.find("fn mutateBuffer(") != std::string::npos);
+    assert(kirText.find("fn takeBuffer(") != std::string::npos);
+    assert(kirText.find("fn main(): void") != std::string::npos);
+    assert(kirText.find("entry:") != std::string::npos);
+
+    // Verify K-IR Binary Serialization Round-Trip
+    auto kirBinary = kirMod->toBinary();
+    assert(!kirBinary.empty());
+    assert(kirBinary.size() > 4);
+    assert(kirBinary[0] == 'K' && kirBinary[1] == 'I' && kirBinary[2] == 'R' && kirBinary[3] == 0x01);
+
+    auto restoredKirMod = KIRModule::fromBinary(kirBinary);
+    assert(restoredKirMod != nullptr);
+    assert(restoredKirMod->name == kirMod->name);
+    assert(restoredKirMod->functions.size() == kirMod->functions.size());
+    assert(restoredKirMod->print() == kirMod->print());
+
+    std::cout << "Feature 9 Phase 3 (K-IR Intermediate Representation & Serialization) verification passed! 🐱" << std::endl;
+
+    // =========================================================================
+    // Feature 9: Phase 4 - Incremental Dependency Graph & Disk Cache Tests
+    // =========================================================================
+    std::filesystem::path phase4CacheDir = ".test_ast_phase4_cache";
+    IncrementalCache phase4Cache(phase4CacheDir);
+    phase4Cache.clear();
+
+    // Verify HashUtil
+    std::string testContent = "module Phase4Demo;\nfn run(): void {}\n";
+    std::string testHash = HashUtil::hashString(testContent);
+    assert(!testHash.empty());
+    assert(testHash == HashUtil::hashString(testContent));
+
+    // Verify Dependency Graph
+    std::filesystem::path fakeSourcePath = ".test_ast_phase4_demo.keet";
+    {
+        std::ofstream out(fakeSourcePath);
+        out << testContent;
+    }
+    std::string fakeSource = fakeSourcePath.string();
+    assert(!phase4Cache.isFresh(fakeSource));
+
+    // Save KIR to cache
+    bool p4Saved = phase4Cache.saveKIR(fakeSource, *kirMod);
+    assert(p4Saved);
+    assert(phase4Cache.getStats().bytesSaved > 0);
+
+    // Should now be fresh
+    assert(phase4Cache.isFresh(fakeSource));
+
+    // Load from cache
+    auto loadedP4KIR = phase4Cache.loadKIR(fakeSource);
+    assert(loadedP4KIR != nullptr);
+    assert(loadedP4KIR->name == kirMod->name);
+    assert(loadedP4KIR->functions.size() == kirMod->functions.size());
+    assert(loadedP4KIR->print() == kirMod->print());
+    assert(phase4Cache.getStats().cacheHits == 1);
+
+    // Invalidation & Clear
+    phase4Cache.invalidate(fakeSource);
+    assert(!phase4Cache.isFresh(fakeSource));
+    phase4Cache.clear();
+    std::filesystem::remove(fakeSourcePath);
+    std::filesystem::remove_all(phase4CacheDir);
+
+    std::cout << "Feature 9 Phase 4 (Incremental Dependency Graph & Disk Cache) verification passed! 🐱" << std::endl;
+
+    // =========================================================================
+    // Feature 9: Phase 5 - C++20 Code Generation from Validated AST / K-IR
+    // =========================================================================
+    std::string phase5Source = R"(
+module Phase5Codegen;
+
+export struct DataPacket {
+    id: int,
+    payload: string
+}
+
+fn processPacket(move packet: DataPacket): string {
+    return move packet.payload;
+}
+
+fn inspectPacket(packet: &DataPacket): int {
+    return packet.id;
+}
+
+fn mutatePacket(packet: &mut DataPacket, newId: int): void {
+    packet.id = newId;
+}
+
+fn main(): void {
+    let mut pkt = DataPacket { id: 1, payload: "Hello" };
+    {
+        let r = &pkt;
+    }
+    {
+        let rmut = &mut pkt;
+    }
+    let movedPkt = move pkt;
+}
+)";
+
+    Lexer p5Lexer(phase5Source, "Phase5Codegen.keet");
+    auto p5Tokens = p5Lexer.tokenize();
+    Parser p5Parser(p5Tokens, "Phase5Codegen");
+    auto p5Ast = p5Parser.parse();
+
+    BorrowChecker p5Checker;
+    bool p5SafetyOk = p5Checker.check(*p5Ast, phase5Source);
+    assert(p5SafetyOk);
+
+    Codegen p5Codegen(*p5Ast, "Phase5Codegen.h");
+    GeneratedCode p5Gen = p5Codegen.generate();
+
+    // Verify 5.1 & 5.2 Header declarations (reference mappings & value ownership)
+    assert(p5Gen.headerCode.find("std::string processPacket(DataPacket packet);") != std::string::npos);
+    assert(p5Gen.headerCode.find("int inspectPacket(const DataPacket& packet);") != std::string::npos);
+    assert(p5Gen.headerCode.find("void mutatePacket(DataPacket& packet, int newId);") != std::string::npos);
+
+    // Verify 5.1 & 5.2 Source implementation (move semantics & auto reference bindings)
+    assert(p5Gen.sourceCode.find("std::move(packet.payload)") != std::string::npos);
+    assert(p5Gen.sourceCode.find("const auto& r = pkt;") != std::string::npos);
+    assert(p5Gen.sourceCode.find("auto& rmut = pkt;") != std::string::npos);
+    assert(p5Gen.sourceCode.find("auto movedPkt = std::move(pkt);") != std::string::npos);
+
+    std::cout << "Feature 9 Phase 5 (C++20 Code Generation from Validated Pipeline) verification passed! 🐱" << std::endl;
+
+    std::cout << "All Phase 1, Phase 2, Phase 3, Phase 4, & Phase 5 AST, Parser, Codegen & Pipeline assertions passed successfully! 🐱" << std::endl;
     return 0;
 }

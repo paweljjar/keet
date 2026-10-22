@@ -21,6 +21,7 @@ namespace Keety {
             !_check(TokenKind::TagStyleOpen)) {
             file->isPureModule = true;
             file->moduleBlock = _parsePureModule();
+            file->isSystemsMode = _isSystemsMode || (file->moduleBlock && file->moduleBlock->isSystems);
             return file;
         }
 
@@ -50,6 +51,7 @@ namespace Keety {
             }
         }
 
+        file->isSystemsMode = _isSystemsMode;
         return file;
     }
 
@@ -483,9 +485,15 @@ namespace Keety {
 
         while (!_isAtEnd() && !_check(TokenKind::RightParen)) {
             ParameterDecl param;
+            if (_match(TokenKind::KwMove)) {
+                param.isMove = true;
+            }
             param.name = _consume(TokenKind::Identifier, "Expected parameter name").text;
             if (_match(TokenKind::Colon)) {
-                param.typeName = _consume(TokenKind::Identifier, "Expected parameter type annotation").text;
+                param.typeName = _parseTypeName();
+                auto ann = TypeAnnotation::parse(param.typeName);
+                param.refKind = ann.refKind;
+                param.lifetime = ann.lifetime;
             }
             fn->parameters.push_back(param);
             if (!_check(TokenKind::RightParen)) {
@@ -494,28 +502,11 @@ namespace Keety {
         }
         _consume(TokenKind::RightParen, "Expected ')' closing parameter list");
 
-        if (_match(TokenKind::Arrow)) {
-            fn->returnType = _consume(TokenKind::Identifier, "Expected return type").text;
+        if (_match(TokenKind::Arrow) || _match(TokenKind::Colon)) {
+            fn->returnType = _parseTypeName();
         }
 
-        _consume(TokenKind::LeftBrace, "Expected '{' before function body");
-        int braceDepth = 1;
-        std::string body;
-        while (!_isAtEnd() && braceDepth > 0) {
-            if (_check(TokenKind::LeftBrace)) braceDepth++;
-            else if (_check(TokenKind::RightBrace)) {
-                braceDepth--;
-                if (braceDepth == 0) break;
-            }
-            if (!body.empty()) body += " ";
-            if (_peek().is(TokenKind::StringLiteral)) {
-                body += "\"" + _advance().text + "\"";
-            } else {
-                body += _advance().text;
-            }
-        }
-        _consume(TokenKind::RightBrace, "Expected '}' closing function body");
-        fn->body = body;
+        fn->body = _parseStatementBody(&fn->bodyTokens);
         return fn;
     }
 
@@ -855,9 +846,28 @@ namespace Keety {
         auto mod = std::make_unique<PureModule>(_peek().loc);
 
         while (!_isAtEnd()) {
-            if (_match(TokenKind::KwModule)) {
+            if (_check(TokenKind::Identifier) && _peek().text == "systems" &&
+                _cursor + 1 < _tokens.size() && _tokens[_cursor + 1].is(TokenKind::KwModule)) {
+                _advance(); // consume 'systems'
+                _advance(); // consume 'module'
                 mod->moduleName = _consume(TokenKind::Identifier, "Expected module identifier").text;
                 _consume(TokenKind::Semicolon, "Expected ';' after module declaration");
+                mod->isSystems = true;
+                _isSystemsMode = true;
+            } else if (_match(TokenKind::KwModule)) {
+                mod->moduleName = _consume(TokenKind::Identifier, "Expected module identifier").text;
+                if (_check(TokenKind::Identifier) && _peek().text == "systems") {
+                    _advance(); // consume 'systems'
+                    mod->isSystems = true;
+                    _isSystemsMode = true;
+                }
+                _consume(TokenKind::Semicolon, "Expected ';' after module declaration");
+            } else if (_check(TokenKind::Invalid) && _peek().text == "@" &&
+                       _cursor + 1 < _tokens.size() && _tokens[_cursor + 1].text == "systems") {
+                _advance(); // @
+                _advance(); // systems
+                mod->isSystems = true;
+                _isSystemsMode = true;
             } else if (_check(TokenKind::KwImport)) {
                 mod->imports.push_back(_parseImport());
             } else if (_match(TokenKind::KwExport)) {
@@ -895,6 +905,22 @@ namespace Keety {
     }
 
     std::string Parser::_parseTypeName() {
+        std::string prefix;
+        if (_match(TokenKind::Ampersand)) {
+            prefix = "&";
+            _isSystemsMode = true;
+            if (_check(TokenKind::Lifetime)) {
+                prefix += _advance().text + " ";
+            }
+            if (_match(TokenKind::KwMut)) {
+                prefix += "mut ";
+            }
+        }
+
+        if (_check(TokenKind::Star)) {
+            throw ParserException("Raw pointers ('*') are not supported in KeetScript. KeetScript uses safe value semantics and managed types.", _peek().loc);
+        }
+
         std::string typeName;
         if (_match(TokenKind::KwCpp)) {
             if (_match(TokenKind::Dot)) {
@@ -930,9 +956,12 @@ namespace Keety {
                 typeName += _advance().text;
             }
         }
-        if (typeName == "io::Buffer" || typeName == "io.Buffer") return "Buffer";
-        if (typeName == "file::File" || typeName == "file.File") return "File";
-        return typeName;
+        if (_check(TokenKind::Star)) {
+            throw ParserException("Raw pointers ('*') are not supported in KeetScript. KeetScript uses safe value semantics and managed types.", _peek().loc);
+        }
+        if (typeName == "io::Buffer" || typeName == "io.Buffer") typeName = "Buffer";
+        if (typeName == "file::File" || typeName == "file.File") typeName = "File";
+        return prefix + typeName;
     }
 
     std::shared_ptr<ClassDecl> Parser::_parseClass(bool isExported) {
@@ -975,9 +1004,19 @@ namespace Keety {
                 _consume(TokenKind::LeftParen, "Expected '(' after constructor name");
                 while (!_isAtEnd() && !_check(TokenKind::RightParen)) {
                     ParameterDecl param;
+                    if (_match(TokenKind::KwMove)) {
+                        param.isMove = true;
+                        _isSystemsMode = true;
+                    }
                     param.name = _consume(TokenKind::Identifier, "Expected constructor parameter name").text;
                     if (_match(TokenKind::Colon)) {
                         param.typeName = _parseTypeName();
+                        auto ann = TypeAnnotation::parse(param.typeName);
+                        param.refKind = ann.refKind;
+                        param.lifetime = ann.lifetime;
+                        if (param.refKind != ReferenceKind::Value || !param.lifetime.empty()) {
+                            _isSystemsMode = true;
+                        }
                     }
                     ctor->parameters.push_back(param);
                     if (!_check(TokenKind::RightParen)) {
@@ -986,7 +1025,7 @@ namespace Keety {
                 }
                 _consume(TokenKind::RightParen, "Expected ')' closing constructor parameters");
 
-                ctor->body = _parseStatementBody();
+                ctor->body = _parseStatementBody(&ctor->bodyTokens);
                 classDecl->constructors.push_back(ctor);
                 continue;
             }
@@ -1000,9 +1039,19 @@ namespace Keety {
                 _consume(TokenKind::LeftParen, "Expected '(' after method name");
                 while (!_isAtEnd() && !_check(TokenKind::RightParen)) {
                     ParameterDecl param;
+                    if (_match(TokenKind::KwMove)) {
+                        param.isMove = true;
+                        _isSystemsMode = true;
+                    }
                     param.name = _consume(TokenKind::Identifier, "Expected method parameter name").text;
                     if (_match(TokenKind::Colon)) {
                         param.typeName = _parseTypeName();
+                        auto ann = TypeAnnotation::parse(param.typeName);
+                        param.refKind = ann.refKind;
+                        param.lifetime = ann.lifetime;
+                        if (param.refKind != ReferenceKind::Value || !param.lifetime.empty()) {
+                            _isSystemsMode = true;
+                        }
                     }
                     method->parameters.push_back(param);
                     if (!_check(TokenKind::RightParen)) {
@@ -1015,15 +1064,16 @@ namespace Keety {
                     method->returnType = _parseTypeName();
                 }
 
-                method->body = _parseStatementBody();
+                method->body = _parseStatementBody(&method->bodyTokens);
                 classDecl->methods.push_back(method);
                 continue;
             }
 
-            // 3) Field: [let] fieldName: type [= expr];
+            // 3) Field: [let] [mut] fieldName: type [= expr];
             if (_check(TokenKind::KwLet) || _check(TokenKind::Identifier)) {
                 SourceLocation fldLoc = _peek().loc;
                 _match(TokenKind::KwLet); // Optional 'let'
+                _match(TokenKind::KwMut); // Optional 'mut'
                 auto field = std::make_shared<ClassFieldDecl>(fldLoc);
                 field->visibility = memberVis;
                 field->name = _consume(TokenKind::Identifier, "Expected field name").text;
@@ -1119,9 +1169,19 @@ namespace Keety {
         _consume(TokenKind::LeftParen, "Expected '(' after function name");
         while (!_isAtEnd() && !_check(TokenKind::RightParen)) {
             ParameterDecl param;
+            if (_match(TokenKind::KwMove)) {
+                param.isMove = true;
+                _isSystemsMode = true;
+            }
             param.name = _consume(TokenKind::Identifier, "Expected parameter name").text;
             if (_match(TokenKind::Colon)) {
                 param.typeName = _parseTypeName();
+                auto ann = TypeAnnotation::parse(param.typeName);
+                param.refKind = ann.refKind;
+                param.lifetime = ann.lifetime;
+                if (param.refKind != ReferenceKind::Value || !param.lifetime.empty()) {
+                    _isSystemsMode = true;
+                }
             }
             fn->parameters.push_back(param);
             if (!_check(TokenKind::RightParen)) {
@@ -1134,11 +1194,12 @@ namespace Keety {
             fn->returnType = _parseTypeName();
         }
 
-        fn->body = _parseStatementBody();
+        fn->body = _parseStatementBody(&fn->bodyTokens);
         return fn;
     }
 
-    std::string Parser::_parseStatementBody() {
+    std::string Parser::_parseStatementBody(std::vector<Token>* outTokens) {
+        size_t startTokenIdx = _cursor;
         _consume(TokenKind::LeftBrace, "Expected '{' to start body");
         int braceDepth = 1;
         std::ostringstream oss;
@@ -1156,6 +1217,25 @@ namespace Keety {
         while (!_isAtEnd() && braceDepth > 0) {
             bool isDotBefore = lastWasDot;
             lastWasDot = false;
+
+            // Reject pointer arrow operator '->' in everyday KeetScript statement bodies
+            if (_check(TokenKind::Arrow)) {
+                throw ParserException("Pointer arrow operator ('->') is not supported in KeetScript. Use '.' dot notation for member access.", _peek().loc);
+            }
+
+            // Reject raw pointer dereference '*ptr' in everyday KeetScript
+            if (_check(TokenKind::Star)) {
+                bool isUnary = (_cursor <= startTokenIdx ||
+                                _tokens[_cursor - 1].is(TokenKind::Assign) ||
+                                _tokens[_cursor - 1].is(TokenKind::LeftParen) ||
+                                _tokens[_cursor - 1].is(TokenKind::Comma) ||
+                                _tokens[_cursor - 1].is(TokenKind::Semicolon) ||
+                                _tokens[_cursor - 1].is(TokenKind::LeftBrace) ||
+                                _tokens[_cursor - 1].is(TokenKind::KwReturn));
+                if (isUnary) {
+                    throw ParserException("Raw pointer dereference ('*') is not supported in KeetScript. KeetScript uses safe value semantics.", _peek().loc);
+                }
+            }
 
             // Object literal / designated initializer: { field: val, ... }
             if (_check(TokenKind::LeftBrace)) {
@@ -1380,32 +1460,117 @@ namespace Keety {
                 if (_match(TokenKind::Colon)) {
                     varType = _parseTypeName();
                 }
-                if (varType == "string") varType = "std::string";
-                else if (varType == "io::Buffer" || varType == "io.Buffer" || varType == "Buffer") varType = "Buffer";
-                else if (varType == "file::File" || varType == "file.File" || varType == "File") varType = "File";
-                else if (varType == "vector<string>" || varType == "array<string>") varType = "std::vector<std::string>";
-                else if (varType.rfind("vector<", 0) == 0) varType = "std::" + varType;
-                else if (varType.rfind("array<", 0) == 0) varType = "std::vector<" + varType.substr(6);
-                appendToken("const " + varType + " " + varName, true, true);
+                auto ann = TypeAnnotation::parse(varType);
+                std::string base = ann.baseType;
+                if (base == "string") base = "std::string";
+                else if (base == "io::Buffer" || base == "io.Buffer" || base == "Buffer") base = "Buffer";
+                else if (base == "file::File" || base == "file.File" || base == "File") base = "File";
+                else if (base == "vector<string>" || base == "array<string>") base = "std::vector<std::string>";
+                else if (base.rfind("vector<", 0) == 0) base = "std::" + base;
+                else if (base.rfind("array<", 0) == 0) base = "std::vector<" + base.substr(6);
+
+                if (ann.isReference()) {
+                    appendToken("const " + base + "& " + varName, true, true);
+                } else if (varType == "auto" && _check(TokenKind::Assign) && _cursor + 1 < _tokens.size() && _tokens[_cursor + 1].is(TokenKind::Ampersand)) {
+                    appendToken("const auto& " + varName, true, true);
+                } else {
+                    appendToken("const " + base + " " + varName, true, true);
+                }
                 continue;
             }
 
-            // Variable declaration: let <ident> [: <type>] [= <expr>];
+            // Variable declaration: let [mut] <ident> [: <type>] [= <expr>];
             if (_check(TokenKind::KwLet)) {
                 _advance(); // Consume 'let'
+                bool isMut = false;
+                if (_match(TokenKind::KwMut)) {
+                    isMut = true;
+                }
                 std::string varName = _consume(TokenKind::Identifier, "Expected variable name after 'let'").text;
                 std::string varType = "auto";
                 if (_match(TokenKind::Colon)) {
                     varType = _parseTypeName();
                 }
-                if (varType == "string") varType = "std::string";
-                else if (varType == "io::Buffer" || varType == "io.Buffer" || varType == "Buffer") varType = "Buffer";
-                else if (varType == "file::File" || varType == "file.File" || varType == "File") varType = "File";
-                else if (varType == "vector<string>" || varType == "array<string>") varType = "std::vector<std::string>";
-                else if (varType.rfind("vector<", 0) == 0) varType = "std::" + varType;
-                else if (varType.rfind("array<", 0) == 0) varType = "std::vector<" + varType.substr(6);
-                appendToken(varType + " " + varName, true, true);
+                auto ann = TypeAnnotation::parse(varType);
+                std::string base = ann.baseType;
+                if (base == "string") base = "std::string";
+                else if (base == "io::Buffer" || base == "io.Buffer" || base == "Buffer") base = "Buffer";
+                else if (base == "file::File" || base == "file.File" || base == "File") base = "File";
+                else if (base == "vector<string>" || base == "array<string>") base = "std::vector<std::string>";
+                else if (base.rfind("vector<", 0) == 0) base = "std::" + base;
+                else if (base.rfind("array<", 0) == 0) base = "std::vector<" + base.substr(6);
+
+                if (ann.isMutableRef()) {
+                    appendToken(base + "& " + varName, true, true);
+                } else if (ann.isImmutableRef()) {
+                    appendToken("const " + base + "& " + varName, true, true);
+                } else if (varType == "auto" && _check(TokenKind::Assign) && _cursor + 1 < _tokens.size()) {
+                    if (_tokens[_cursor + 1].is(TokenKind::Ampersand)) {
+                        if (_cursor + 2 < _tokens.size() && _tokens[_cursor + 2].is(TokenKind::KwMut)) {
+                            appendToken("auto& " + varName, true, true);
+                        } else {
+                            appendToken("const auto& " + varName, true, true);
+                        }
+                    } else {
+                        appendToken("auto " + varName, true, true);
+                    }
+                } else {
+                    appendToken(base + " " + varName, true, true);
+                }
                 continue;
+            }
+
+            // Ownership transfer: move <ident_or_expr> -> std::move(<expr>)
+            if (_check(TokenKind::KwMove)) {
+                _advance(); // consume 'move'
+                _isSystemsMode = true;
+                appendToken("std::move(", true, false);
+                int mDepth = 0;
+                bool firstTok = true;
+                while (!_isAtEnd()) {
+                    if (mDepth == 0 && (_check(TokenKind::Semicolon) || _check(TokenKind::Comma) || _check(TokenKind::RightParen) || _check(TokenKind::RightBracket) || _check(TokenKind::RightBrace))) {
+                        break;
+                    }
+                    if (_check(TokenKind::LeftParen) || _check(TokenKind::LeftBracket) || _check(TokenKind::LeftBrace)) mDepth++;
+                    else if (_check(TokenKind::RightParen) || _check(TokenKind::RightBracket) || _check(TokenKind::RightBrace)) mDepth--;
+                    Token mTok = _advance();
+                    if (mTok.is(TokenKind::Dot)) {
+                        appendToken(mTok.text, false, false);
+                    } else if (mTok.is(TokenKind::LeftParen) || mTok.is(TokenKind::LeftBracket)) {
+                        appendToken(mTok.text, false, false);
+                    } else if (mTok.is(TokenKind::RightParen) || mTok.is(TokenKind::RightBracket)) {
+                        appendToken(mTok.text, false, false);
+                    } else {
+                        appendToken(mTok.text, !firstTok, false);
+                    }
+                    firstTok = false;
+                }
+                appendToken(")", false, true);
+                continue;
+            }
+
+            // Borrow operators: &mut <expr> or &<expr>
+            if (_check(TokenKind::Ampersand)) {
+                _advance(); // consume '&'
+                if (_match(TokenKind::KwMut)) {
+                    // &mut <expr> in C++ call context is the lvalue reference itself
+                    _isSystemsMode = true;
+                    continue;
+                } else {
+                    bool isPrefix = (_cursor <= 1 || _tokens[_cursor - 2].is(TokenKind::LeftParen) ||
+                                     _tokens[_cursor - 2].is(TokenKind::Comma) ||
+                                     _tokens[_cursor - 2].is(TokenKind::Assign) ||
+                                     _tokens[_cursor - 2].is(TokenKind::Colon));
+                    if (isPrefix) {
+                        // Unary immutable borrow &x in C++ is the lvalue itself
+                        _isSystemsMode = true;
+                        continue;
+                    } else {
+                        // Binary bitwise &
+                        appendToken("&", true, true);
+                        continue;
+                    }
+                }
             }
 
             // Stream print: print(...) -> keet::io::print(...) (only root print, not obj.print)
@@ -1497,6 +1662,10 @@ namespace Keety {
             } else {
                 appendToken(_advance().text, true, true);
             }
+        }
+
+        if (outTokens && startTokenIdx < _tokens.size() && _cursor <= _tokens.size()) {
+            outTokens->assign(_tokens.begin() + startTokenIdx, _tokens.begin() + _cursor);
         }
 
         return transformZonk(oss.str());
