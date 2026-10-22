@@ -8,6 +8,7 @@
 #include "Token.h"
 #include "AST.h"
 #include "ASTPrinter.h"
+#include "Diagnostic.h"
 #include "Lexer.h"
 #include "Parser.h"
 #include "Codegen.h"
@@ -514,6 +515,103 @@ fn main(): void {
     assert(standGen.sourceCode.find("return 0;") != std::string::npos);
 
     std::cout << "Standalone KeetScript C++20 Codegen verification passed! 🐱" << std::endl;
+
+    // =========================================================================
+    // Feature 9: Phase 1 - Borrowing & Ownership Grammar & Diagnostic Tests
+    // =========================================================================
+    std::string borrowCode = R"(
+module MemorySafety;
+
+fn readBuffer(buf: &Buffer): int {
+    return buf.size();
+}
+
+fn mutateBuffer(buf: &mut Buffer, val: string): void {
+    buf.append(val);
+}
+
+fn takeBuffer(move buf: Buffer): Buffer {
+    return move buf;
+}
+
+fn main(): void {
+    let mut b: Buffer = Buffer{};
+    let r: &Buffer = &b;
+    let rmut: &mut Buffer = &mut b;
+    let movedB = move b;
+}
+)";
+
+    Lexer borrowLexer(borrowCode, "MemorySafety.keet");
+    auto borrowTokens = borrowLexer.tokenize();
+    
+    // Check tokens
+    bool foundAmpersand = false;
+    bool foundKwMut = false;
+    bool foundKwMove = false;
+    for (const auto& tok : borrowTokens) {
+        if (tok.is(TokenKind::Ampersand)) foundAmpersand = true;
+        if (tok.is(TokenKind::KwMut)) foundKwMut = true;
+        if (tok.is(TokenKind::KwMove)) foundKwMove = true;
+    }
+    assert(foundAmpersand);
+    assert(foundKwMut);
+    assert(foundKwMove);
+
+    Parser borrowParser(borrowTokens, "MemorySafety");
+    auto parsedBorrow = borrowParser.parse();
+    assert(parsedBorrow->isPureModule);
+    assert(parsedBorrow->moduleBlock->functions.size() == 4);
+
+    auto fRead = parsedBorrow->moduleBlock->functions[0];
+    assert(fRead->name == "readBuffer");
+    assert(fRead->parameters.size() == 1);
+    assert(fRead->parameters[0].name == "buf");
+    assert(fRead->parameters[0].refKind == ReferenceKind::ImmutableRef);
+
+    auto fMut = parsedBorrow->moduleBlock->functions[1];
+    assert(fMut->name == "mutateBuffer");
+    assert(fMut->parameters.size() == 2);
+    assert(fMut->parameters[0].name == "buf");
+    assert(fMut->parameters[0].refKind == ReferenceKind::MutableRef);
+
+    auto fTake = parsedBorrow->moduleBlock->functions[2];
+    assert(fTake->name == "takeBuffer");
+    assert(fTake->parameters.size() == 1);
+    assert(fTake->parameters[0].isMove);
+
+    // Verify Codegen emits proper C++ references & std::move
+    Codegen borrowCodegen(*parsedBorrow, "MemorySafety.h");
+    GeneratedCode borrowGen = borrowCodegen.generate();
+    assert(borrowGen.headerCode.find("int readBuffer(const keet::io::BufferView& buf);") != std::string::npos);
+    assert(borrowGen.headerCode.find("void mutateBuffer(keet::io::BufferView& buf, std::string val);") != std::string::npos);
+    assert(borrowGen.sourceCode.find("std::move(b)") != std::string::npos);
+
+    // Test TypeAnnotation
+    auto immAnn = TypeAnnotation::parse("&Buffer");
+    assert(immAnn.isImmutableRef());
+    assert(immAnn.baseType == "Buffer");
+
+    auto mutAnn = TypeAnnotation::parse("&mut string");
+    assert(mutAnn.isMutableRef());
+    assert(mutAnn.baseType == "string");
+
+    auto lifeAnn = TypeAnnotation::parse("&'a mut Buffer");
+    assert(lifeAnn.isMutableRef());
+    assert(lifeAnn.lifetime == "'a");
+    assert(lifeAnn.baseType == "Buffer");
+
+    // Test Diagnostic Formatter
+    SourceLocation diagLoc{"test.keet", 2, 5};
+    Diagnostic diag(ErrorCode::E0501_UseOfMovedValue, "use of moved value 'buf'", diagLoc, 3, "value used here after move");
+    diag.withHelp("value was moved earlier. Consider borrowing instead: '&buf'");
+    std::string diagFormatted = diag.format("let a = 1;\n    buf.size();\n");
+    assert(diagFormatted.find("error[E0501]: use of moved value 'buf'") != std::string::npos);
+    assert(diagFormatted.find("--> test.keet:2:5") != std::string::npos);
+    assert(diagFormatted.find("^^^ value used here after move") != std::string::npos);
+    assert(diagFormatted.find("help: value was moved earlier. Consider borrowing instead: '&buf'") != std::string::npos);
+
+    std::cout << "Feature 9 Phase 1 (Tokens, AST, References, Moves & Diagnostics) verification passed! 🐱" << std::endl;
 
     std::cout << "All Phase 1, Phase 2, & Phase 3 AST, Parser & Codegen assertions passed successfully! 🐱" << std::endl;
     return 0;

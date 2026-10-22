@@ -223,9 +223,73 @@ namespace Keety {
         void accept(ASTVisitor& visitor) const override { visitor.visit(*this); }
     };
 
+    enum class ReferenceKind {
+        Value,          // T (owned value)
+        ImmutableRef,   // &T (immutable borrow)
+        MutableRef      // &mut T (mutable borrow)
+    };
+
+    struct TypeAnnotation {
+        std::string baseType;
+        ReferenceKind refKind = ReferenceKind::Value;
+        std::string lifetime;
+        bool isMove = false;
+
+        [[nodiscard]] bool isReference() const { return refKind != ReferenceKind::Value; }
+        [[nodiscard]] bool isMutableRef() const { return refKind == ReferenceKind::MutableRef; }
+        [[nodiscard]] bool isImmutableRef() const { return refKind == ReferenceKind::ImmutableRef; }
+
+        [[nodiscard]] std::string toString() const {
+            std::string s;
+            if (refKind == ReferenceKind::ImmutableRef) {
+                s += "&";
+                if (!lifetime.empty()) s += lifetime + " ";
+            } else if (refKind == ReferenceKind::MutableRef) {
+                s += "&mut ";
+                if (!lifetime.empty()) s += lifetime + " ";
+            }
+            s += baseType;
+            return s;
+        }
+
+        static TypeAnnotation parse(std::string_view raw) {
+            TypeAnnotation t;
+            std::string s(raw);
+            while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
+            while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
+
+            if (s.rfind("&", 0) == 0) {
+                t.refKind = ReferenceKind::ImmutableRef;
+                s = s.substr(1);
+                while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
+                if (!s.empty() && s.front() == '\'') {
+                    size_t sp = s.find(' ');
+                    if (sp != std::string::npos) {
+                        t.lifetime = s.substr(0, sp);
+                        s = s.substr(sp + 1);
+                    } else {
+                        t.lifetime = s;
+                        s.clear();
+                    }
+                }
+                while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
+                if (s.rfind("mut", 0) == 0 && (s.size() == 3 || std::isspace(static_cast<unsigned char>(s[3])))) {
+                    t.refKind = ReferenceKind::MutableRef;
+                    s = s.substr(3);
+                }
+            }
+            while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
+            t.baseType = s;
+            return t;
+        }
+    };
+
     struct ParameterDecl { // Helper struct representing a formal parameter in a def function
         std::string name; // Parameter variable name
         std::string typeName; // Parameter type annotation
+        ReferenceKind refKind = ReferenceKind::Value; // Ownership/borrow kind
+        std::string lifetime; // Optional lifetime annotation
+        bool isMove = false; // Accepts value via move
     };
 
     struct FunctionDecl : public ASTNode { // Represents a helper function or event handler method (def reset() { ... })

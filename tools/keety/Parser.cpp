@@ -483,9 +483,15 @@ namespace Keety {
 
         while (!_isAtEnd() && !_check(TokenKind::RightParen)) {
             ParameterDecl param;
+            if (_match(TokenKind::KwMove)) {
+                param.isMove = true;
+            }
             param.name = _consume(TokenKind::Identifier, "Expected parameter name").text;
             if (_match(TokenKind::Colon)) {
-                param.typeName = _consume(TokenKind::Identifier, "Expected parameter type annotation").text;
+                param.typeName = _parseTypeName();
+                auto ann = TypeAnnotation::parse(param.typeName);
+                param.refKind = ann.refKind;
+                param.lifetime = ann.lifetime;
             }
             fn->parameters.push_back(param);
             if (!_check(TokenKind::RightParen)) {
@@ -494,8 +500,8 @@ namespace Keety {
         }
         _consume(TokenKind::RightParen, "Expected ')' closing parameter list");
 
-        if (_match(TokenKind::Arrow)) {
-            fn->returnType = _consume(TokenKind::Identifier, "Expected return type").text;
+        if (_match(TokenKind::Arrow) || _match(TokenKind::Colon)) {
+            fn->returnType = _parseTypeName();
         }
 
         _consume(TokenKind::LeftBrace, "Expected '{' before function body");
@@ -895,6 +901,17 @@ namespace Keety {
     }
 
     std::string Parser::_parseTypeName() {
+        std::string prefix;
+        if (_match(TokenKind::Ampersand)) {
+            prefix = "&";
+            if (_check(TokenKind::Lifetime)) {
+                prefix += _advance().text + " ";
+            }
+            if (_match(TokenKind::KwMut)) {
+                prefix += "mut ";
+            }
+        }
+
         std::string typeName;
         if (_match(TokenKind::KwCpp)) {
             if (_match(TokenKind::Dot)) {
@@ -930,9 +947,9 @@ namespace Keety {
                 typeName += _advance().text;
             }
         }
-        if (typeName == "io::Buffer" || typeName == "io.Buffer") return "Buffer";
-        if (typeName == "file::File" || typeName == "file.File") return "File";
-        return typeName;
+        if (typeName == "io::Buffer" || typeName == "io.Buffer") typeName = "Buffer";
+        if (typeName == "file::File" || typeName == "file.File") typeName = "File";
+        return prefix + typeName;
     }
 
     std::shared_ptr<ClassDecl> Parser::_parseClass(bool isExported) {
@@ -975,9 +992,15 @@ namespace Keety {
                 _consume(TokenKind::LeftParen, "Expected '(' after constructor name");
                 while (!_isAtEnd() && !_check(TokenKind::RightParen)) {
                     ParameterDecl param;
+                    if (_match(TokenKind::KwMove)) {
+                        param.isMove = true;
+                    }
                     param.name = _consume(TokenKind::Identifier, "Expected constructor parameter name").text;
                     if (_match(TokenKind::Colon)) {
                         param.typeName = _parseTypeName();
+                        auto ann = TypeAnnotation::parse(param.typeName);
+                        param.refKind = ann.refKind;
+                        param.lifetime = ann.lifetime;
                     }
                     ctor->parameters.push_back(param);
                     if (!_check(TokenKind::RightParen)) {
@@ -1000,9 +1023,15 @@ namespace Keety {
                 _consume(TokenKind::LeftParen, "Expected '(' after method name");
                 while (!_isAtEnd() && !_check(TokenKind::RightParen)) {
                     ParameterDecl param;
+                    if (_match(TokenKind::KwMove)) {
+                        param.isMove = true;
+                    }
                     param.name = _consume(TokenKind::Identifier, "Expected method parameter name").text;
                     if (_match(TokenKind::Colon)) {
                         param.typeName = _parseTypeName();
+                        auto ann = TypeAnnotation::parse(param.typeName);
+                        param.refKind = ann.refKind;
+                        param.lifetime = ann.lifetime;
                     }
                     method->parameters.push_back(param);
                     if (!_check(TokenKind::RightParen)) {
@@ -1020,10 +1049,11 @@ namespace Keety {
                 continue;
             }
 
-            // 3) Field: [let] fieldName: type [= expr];
+            // 3) Field: [let] [mut] fieldName: type [= expr];
             if (_check(TokenKind::KwLet) || _check(TokenKind::Identifier)) {
                 SourceLocation fldLoc = _peek().loc;
                 _match(TokenKind::KwLet); // Optional 'let'
+                _match(TokenKind::KwMut); // Optional 'mut'
                 auto field = std::make_shared<ClassFieldDecl>(fldLoc);
                 field->visibility = memberVis;
                 field->name = _consume(TokenKind::Identifier, "Expected field name").text;
@@ -1119,9 +1149,15 @@ namespace Keety {
         _consume(TokenKind::LeftParen, "Expected '(' after function name");
         while (!_isAtEnd() && !_check(TokenKind::RightParen)) {
             ParameterDecl param;
+            if (_match(TokenKind::KwMove)) {
+                param.isMove = true;
+            }
             param.name = _consume(TokenKind::Identifier, "Expected parameter name").text;
             if (_match(TokenKind::Colon)) {
                 param.typeName = _parseTypeName();
+                auto ann = TypeAnnotation::parse(param.typeName);
+                param.refKind = ann.refKind;
+                param.lifetime = ann.lifetime;
             }
             fn->parameters.push_back(param);
             if (!_check(TokenKind::RightParen)) {
@@ -1380,32 +1416,91 @@ namespace Keety {
                 if (_match(TokenKind::Colon)) {
                     varType = _parseTypeName();
                 }
-                if (varType == "string") varType = "std::string";
-                else if (varType == "io::Buffer" || varType == "io.Buffer" || varType == "Buffer") varType = "Buffer";
-                else if (varType == "file::File" || varType == "file.File" || varType == "File") varType = "File";
-                else if (varType == "vector<string>" || varType == "array<string>") varType = "std::vector<std::string>";
-                else if (varType.rfind("vector<", 0) == 0) varType = "std::" + varType;
-                else if (varType.rfind("array<", 0) == 0) varType = "std::vector<" + varType.substr(6);
-                appendToken("const " + varType + " " + varName, true, true);
+                auto ann = TypeAnnotation::parse(varType);
+                std::string base = ann.baseType;
+                if (base == "string") base = "std::string";
+                else if (base == "io::Buffer" || base == "io.Buffer" || base == "Buffer") base = "Buffer";
+                else if (base == "file::File" || base == "file.File" || base == "File") base = "File";
+                else if (base == "vector<string>" || base == "array<string>") base = "std::vector<std::string>";
+                else if (base.rfind("vector<", 0) == 0) base = "std::" + base;
+                else if (base.rfind("array<", 0) == 0) base = "std::vector<" + base.substr(6);
+
+                if (ann.isReference()) {
+                    appendToken("const " + base + "& " + varName, true, true);
+                } else {
+                    appendToken("const " + base + " " + varName, true, true);
+                }
                 continue;
             }
 
-            // Variable declaration: let <ident> [: <type>] [= <expr>];
+            // Variable declaration: let [mut] <ident> [: <type>] [= <expr>];
             if (_check(TokenKind::KwLet)) {
                 _advance(); // Consume 'let'
+                bool isMut = false;
+                if (_match(TokenKind::KwMut)) {
+                    isMut = true;
+                }
                 std::string varName = _consume(TokenKind::Identifier, "Expected variable name after 'let'").text;
                 std::string varType = "auto";
                 if (_match(TokenKind::Colon)) {
                     varType = _parseTypeName();
                 }
-                if (varType == "string") varType = "std::string";
-                else if (varType == "io::Buffer" || varType == "io.Buffer" || varType == "Buffer") varType = "Buffer";
-                else if (varType == "file::File" || varType == "file.File" || varType == "File") varType = "File";
-                else if (varType == "vector<string>" || varType == "array<string>") varType = "std::vector<std::string>";
-                else if (varType.rfind("vector<", 0) == 0) varType = "std::" + varType;
-                else if (varType.rfind("array<", 0) == 0) varType = "std::vector<" + varType.substr(6);
-                appendToken(varType + " " + varName, true, true);
+                auto ann = TypeAnnotation::parse(varType);
+                std::string base = ann.baseType;
+                if (base == "string") base = "std::string";
+                else if (base == "io::Buffer" || base == "io.Buffer" || base == "Buffer") base = "Buffer";
+                else if (base == "file::File" || base == "file.File" || base == "File") base = "File";
+                else if (base == "vector<string>" || base == "array<string>") base = "std::vector<std::string>";
+                else if (base.rfind("vector<", 0) == 0) base = "std::" + base;
+                else if (base.rfind("array<", 0) == 0) base = "std::vector<" + base.substr(6);
+
+                if (ann.isMutableRef()) {
+                    appendToken(base + "& " + varName, true, true);
+                } else if (ann.isImmutableRef()) {
+                    appendToken("const " + base + "& " + varName, true, true);
+                } else {
+                    appendToken(base + " " + varName, true, true);
+                }
                 continue;
+            }
+
+            // Ownership transfer: move <ident_or_expr> -> std::move(<expr>)
+            if (_check(TokenKind::KwMove)) {
+                _advance(); // consume 'move'
+                appendToken("std::move(", true, false);
+                int mDepth = 0;
+                while (!_isAtEnd()) {
+                    if (mDepth == 0 && (_check(TokenKind::Semicolon) || _check(TokenKind::Comma) || _check(TokenKind::RightParen) || _check(TokenKind::RightBracket) || _check(TokenKind::RightBrace))) {
+                        break;
+                    }
+                    if (_check(TokenKind::LeftParen) || _check(TokenKind::LeftBracket) || _check(TokenKind::LeftBrace)) mDepth++;
+                    else if (_check(TokenKind::RightParen) || _check(TokenKind::RightBracket) || _check(TokenKind::RightBrace)) mDepth--;
+                    appendToken(_advance().text, true, true);
+                }
+                appendToken(")", false, true);
+                continue;
+            }
+
+            // Borrow operators: &mut <expr> or &<expr>
+            if (_check(TokenKind::Ampersand)) {
+                _advance(); // consume '&'
+                if (_match(TokenKind::KwMut)) {
+                    // &mut <expr> in C++ call context is the lvalue reference itself
+                    continue;
+                } else {
+                    bool isPrefix = (_cursor <= 1 || _tokens[_cursor - 2].is(TokenKind::LeftParen) ||
+                                     _tokens[_cursor - 2].is(TokenKind::Comma) ||
+                                     _tokens[_cursor - 2].is(TokenKind::Assign) ||
+                                     _tokens[_cursor - 2].is(TokenKind::Colon));
+                    if (isPrefix) {
+                        // Unary immutable borrow &x in C++ is the lvalue itself
+                        continue;
+                    } else {
+                        // Binary bitwise &
+                        appendToken("&", true, true);
+                        continue;
+                    }
+                }
             }
 
             // Stream print: print(...) -> keet::io::print(...) (only root print, not obj.print)

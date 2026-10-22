@@ -12,6 +12,7 @@
 
 #include "AST.h"
 #include "Codegen.h"
+#include "Diagnostic.h"
 #include "Lexer.h"
 #include "Parser.h"
 
@@ -165,6 +166,9 @@ int main(int argc, char* argv[]) {
         std::cout << "keety: compiled " << inputFile << " -> " << outputHeaderFile << " & " << outputSourceFile << " 🐱\n";
         return 0;
 
+    } catch (const Keety::DiagnosticException& de) {
+        std::cerr << de.what() << "\n";
+        return 1;
     } catch (const Keety::LexerException& le) {
         std::cerr << le.what() << "\n";
         return 1;

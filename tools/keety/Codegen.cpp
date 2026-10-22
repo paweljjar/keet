@@ -9,6 +9,26 @@
 namespace Keety {
 
     std::string Codegen::_mapType(const std::string& typeName) const {
+        if (typeName.rfind("&mut", 0) == 0) {
+            std::string base = typeName.substr(4);
+            while (!base.empty() && std::isspace(static_cast<unsigned char>(base.front()))) base.erase(base.begin());
+            if (!base.empty() && base.front() == '\'') {
+                size_t sp = base.find(' ');
+                if (sp != std::string::npos) base = base.substr(sp + 1);
+            }
+            while (!base.empty() && std::isspace(static_cast<unsigned char>(base.front()))) base.erase(base.begin());
+            return _mapType(base) + "&";
+        }
+        if (typeName.rfind("&", 0) == 0) {
+            std::string base = typeName.substr(1);
+            while (!base.empty() && std::isspace(static_cast<unsigned char>(base.front()))) base.erase(base.begin());
+            if (!base.empty() && base.front() == '\'') {
+                size_t sp = base.find(' ');
+                if (sp != std::string::npos) base = base.substr(sp + 1);
+            }
+            while (!base.empty() && std::isspace(static_cast<unsigned char>(base.front()))) base.erase(base.begin());
+            return "const " + _mapType(base) + "&";
+        }
         if (typeName == "string") return "std::string";
         if (typeName == "int64") return "long long";
         if (typeName == "int") return "int";

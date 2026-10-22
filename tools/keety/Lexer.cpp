@@ -93,6 +93,8 @@ namespace Keety {
         if (text == "print") return Token(TokenKind::KwPrint, text, loc);
         if (text == "errtype") return Token(TokenKind::KwErrtype, text, loc);
         if (text == "zonk") return Token(TokenKind::KwZonk, text, loc);
+        if (text == "move") return Token(TokenKind::KwMove, text, loc);
+        if (text == "mut") return Token(TokenKind::KwMut, text, loc);
 
         return Token(TokenKind::Identifier, text, loc);
     }
@@ -187,7 +189,22 @@ namespace Keety {
                 SourceLocation loc = _currentLoc();
                 char c = _peek();
 
-                if (c == '"' || c == '\'') {
+                if (c == '\'') {
+                    if (_cursor + 1 < _source.size() && (std::isalpha(static_cast<unsigned char>(_source[_cursor + 1])) || _source[_cursor + 1] == '_')) {
+                        size_t look = _cursor + 1;
+                        while (look < _source.size() && (std::isalnum(static_cast<unsigned char>(_source[look])) || _source[look] == '_')) {
+                            look++;
+                        }
+                        if (look >= _source.size() || _source[look] != '\'') {
+                            _advance(); // consume '\''
+                            size_t start = _cursor;
+                            _cursor = look;
+                            tokens.emplace_back(TokenKind::Lifetime, "'" + _source.substr(start, _cursor - start), loc);
+                            continue;
+                        }
+                    }
+                    tokens.push_back(_lexString(c));
+                } else if (c == '"') {
                     tokens.push_back(_lexString(c));
                 } else if (std::isdigit(static_cast<unsigned char>(c))) {
                     tokens.push_back(_lexNumber());
@@ -226,6 +243,9 @@ namespace Keety {
                 } else if (c == '&' && _peek(1) == '&') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, "&&", loc);
+                } else if (c == '&') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::Ampersand, "&", loc);
                 } else if (c == '|' && _peek(1) == '|') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, "||", loc);
@@ -296,7 +316,22 @@ namespace Keety {
                 }
 
                 char c = _peek();
-                if (c == '"' || c == '\'') {
+                if (c == '\'') {
+                    if (_cursor + 1 < _source.size() && (std::isalpha(static_cast<unsigned char>(_source[_cursor + 1])) || _source[_cursor + 1] == '_')) {
+                        size_t look = _cursor + 1;
+                        while (look < _source.size() && (std::isalnum(static_cast<unsigned char>(_source[look])) || _source[look] == '_')) {
+                            look++;
+                        }
+                        if (look >= _source.size() || _source[look] != '\'') {
+                            _advance(); // consume '\''
+                            size_t start = _cursor;
+                            _cursor = look;
+                            tokens.emplace_back(TokenKind::Lifetime, "'" + _source.substr(start, _cursor - start), loc);
+                            continue;
+                        }
+                    }
+                    tokens.push_back(_lexString(c));
+                } else if (c == '"') {
                     tokens.push_back(_lexString(c));
                 } else if (std::isdigit(static_cast<unsigned char>(c))) {
                     tokens.push_back(_lexNumber());
@@ -329,6 +364,9 @@ namespace Keety {
                 } else if (c == '&' && _peek(1) == '&') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, "&&", loc);
+                } else if (c == '&') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::Ampersand, "&", loc);
                 } else if (c == '|' && _peek(1) == '|') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, "||", loc);
@@ -387,7 +425,22 @@ namespace Keety {
                 }
 
                 char c = _peek();
-                if (c == '"' || c == '\'') {
+                if (c == '\'') {
+                    if (_cursor + 1 < _source.size() && (std::isalpha(static_cast<unsigned char>(_source[_cursor + 1])) || _source[_cursor + 1] == '_')) {
+                        size_t look = _cursor + 1;
+                        while (look < _source.size() && (std::isalnum(static_cast<unsigned char>(_source[look])) || _source[look] == '_')) {
+                            look++;
+                        }
+                        if (look >= _source.size() || _source[look] != '\'') {
+                            _advance(); // consume '\''
+                            size_t start = _cursor;
+                            _cursor = look;
+                            tokens.emplace_back(TokenKind::Lifetime, "'" + _source.substr(start, _cursor - start), loc);
+                            continue;
+                        }
+                    }
+                    tokens.push_back(_lexString(c));
+                } else if (c == '"') {
                     tokens.push_back(_lexString(c));
                 } else if (std::isdigit(static_cast<unsigned char>(c))) {
                     tokens.push_back(_lexNumber());
@@ -420,6 +473,9 @@ namespace Keety {
                 } else if (c == '&' && _peek(1) == '&') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, "&&", loc);
+                } else if (c == '&') {
+                    _advance();
+                    tokens.emplace_back(TokenKind::Ampersand, "&", loc);
                 } else if (c == '|' && _peek(1) == '|') {
                     _advance(); _advance();
                     tokens.emplace_back(TokenKind::Invalid, "||", loc);
