@@ -3,6 +3,7 @@
 //
 
 #include "CLI.h"
+#include "Scaffold.h"
 #include <filesystem>
 #include <sstream>
 
@@ -223,7 +224,19 @@ namespace Cattery {
             case CommandKind::Init: {
                 out << "cattery: scaffolding " << targetToString(options.target)
                     << " project '" << options.projectName << "' \U0001F431\n";
-                // Phase 2 will execute the full Scaffolding engine
+                auto res = Scaffold::initProject(options.projectName, options.target, options.projectDir);
+                if (!res.success) {
+                    err << "cattery: error: " << res.errorMessage << "\n";
+                    return 1;
+                }
+                out << "  ✔ Created project directory: " << res.projectRoot.string() << "\n";
+                for (const auto& file : res.generatedFiles) {
+                    out << "  ✔ Generated: " << file.string() << "\n";
+                }
+                out << "\nProject '" << options.projectName << "' successfully initialized! \U0001F431✨\n"
+                    << "To build:\n"
+                    << "  cd " << res.projectRoot.string() << "\n"
+                    << "  cattery build\n";
                 return 0;
             }
             case CommandKind::Build: {

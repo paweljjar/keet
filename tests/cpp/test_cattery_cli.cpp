@@ -3,6 +3,8 @@
 //
 
 #include <keet/Testing.h>
+#include <chrono>
+#include <filesystem>
 #include <sstream>
 #include "CLI.h"
 
@@ -220,12 +222,18 @@ KEET_TEST(CatteryCLI, RunDispatcher) {
     }
     // Test init dispatch
     {
+        auto sandbox = std::filesystem::temp_directory_path() / ("cattery_cli_disp_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(sandbox);
+        std::string sandboxStr = sandbox.string();
+
         std::ostringstream out, err;
-        const char* argv[] = {"cattery", "init", "demo_project"};
-        auto opts = CatteryCLI::parse(3, argv);
+        const char* argv[] = {"cattery", "init", "demo_project", "-C", sandboxStr.c_str()};
+        auto opts = CatteryCLI::parse(5, argv);
         int code = CatteryCLI::run(opts, out, err);
         KEET_ASSERT_EQ(code, 0);
         KEET_ASSERT_TRUE(out.str().find("scaffolding app project 'demo_project'") != std::string::npos);
+
+        std::filesystem::remove_all(sandbox);
     }
     // Test invalid command dispatch error
     {

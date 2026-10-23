@@ -98,6 +98,7 @@ target_include_directories(keety PRIVATE tools/keety)
 add_executable(cattery
         tools/cattery/main.cpp
         tools/cattery/CLI.cpp
+        tools/cattery/Scaffold.cpp
         src/Json.cpp
 )
 target_include_directories(cattery PRIVATE
@@ -204,9 +205,18 @@ target_include_directories(test_cpp_incremental_cache PRIVATE tools/keety)
 # Cattery CLI command & argument parser C++ unit test (Feature 10)
 keet_add_test(test_cpp_cattery_cli tests/cpp/test_cattery_cli.cpp
         tools/cattery/CLI.cpp
+        tools/cattery/Scaffold.cpp
         src/Json.cpp
 )
 target_include_directories(test_cpp_cattery_cli PRIVATE tools/cattery include)
+
+# Cattery Workspace & Scaffolding C++ unit test (Feature 10)
+keet_add_test(test_cpp_cattery_workspace tests/cpp/test_cattery_workspace.cpp
+        tools/cattery/CLI.cpp
+        tools/cattery/Scaffold.cpp
+        src/Json.cpp
+)
+target_include_directories(test_cpp_cattery_workspace PRIVATE tools/cattery include)
 
 # =============================================================================
 # KeetScript Test Suite (tests/keet)
