@@ -10,7 +10,9 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "Lockfile.h"
 #include "Manifest.h"
+#include "ManifestValidator.h"
 
 namespace Cattery {
 
@@ -43,6 +45,7 @@ namespace Cattery {
         [[nodiscard]] std::filesystem::path getCacheDir() const { return getCatteryDir() / "cache" / "kir"; }
         [[nodiscard]] std::filesystem::path getPackagesDir() const { return getCatteryDir() / "packages"; }
         [[nodiscard]] std::filesystem::path getManifestPath() const { return _root / "pedigree.json"; }
+        [[nodiscard]] std::filesystem::path getLockfilePath() const { return _root / "pedigree.lock"; }
 
         // Ensure all required .cattery directories exist
         bool ensureLayout(std::string* errorOut = nullptr) const;
@@ -50,6 +53,13 @@ namespace Cattery {
         // Load or save pedigree.json
         [[nodiscard]] std::optional<Manifest> loadManifest(std::string* errorOut = nullptr) const;
         bool saveManifest(const Manifest& manifest, std::string* errorOut = nullptr) const;
+
+        // Load or save pedigree.lock
+        [[nodiscard]] std::optional<Lockfile> loadLockfile(std::string* errorOut = nullptr) const;
+        bool saveLockfile(const Lockfile& lockfile, std::string* errorOut = nullptr) const;
+
+        // Validate manifest against schema
+        [[nodiscard]] ValidationResult validateManifest(std::string* errorOut = nullptr) const;
 
         // Perform cleaning operation according to CleanScope
         CleanResult clean(CleanScope scope) const;

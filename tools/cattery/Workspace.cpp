@@ -3,6 +3,8 @@
 //
 
 #include "Workspace.h"
+#include <fstream>
+#include <sstream>
 #include <system_error>
 
 namespace Cattery {
@@ -151,11 +153,50 @@ namespace Cattery {
     }
 
     std::optional<Manifest> Workspace::loadManifest(std::string* errorOut) const {
+        auto valRes = validateManifest(errorOut);
+        if (!valRes.valid) {
+            return std::nullopt;
+        }
         return Manifest::loadFromFile(getManifestPath(), errorOut);
     }
 
     bool Workspace::saveManifest(const Manifest& manifest, std::string* errorOut) const {
         return manifest.saveToFile(getManifestPath(), errorOut);
+    }
+
+    std::optional<Lockfile> Workspace::loadLockfile(std::string* errorOut) const {
+        return Lockfile::loadFromFile(getLockfilePath(), errorOut);
+    }
+
+    bool Workspace::saveLockfile(const Lockfile& lockfile, std::string* errorOut) const {
+        return lockfile.saveToFile(getLockfilePath(), errorOut);
+    }
+
+    ValidationResult Workspace::validateManifest(std::string* errorOut) const {
+        std::error_code ec;
+        auto path = getManifestPath();
+        if (!std::filesystem::exists(path, ec) || !std::filesystem::is_regular_file(path, ec)) {
+            ValidationResult res;
+            res.addError("", "Manifest file not found: " + path.string());
+            if (errorOut) *errorOut = res.format();
+            return res;
+        }
+
+        std::ifstream file(path);
+        if (!file.is_open()) {
+            ValidationResult res;
+            res.addError("", "Failed to open manifest file: " + path.string());
+            if (errorOut) *errorOut = res.format();
+            return res;
+        }
+
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        auto res = ManifestValidator::validateString(buffer.str());
+        if (!res.valid && errorOut) {
+            *errorOut = res.format();
+        }
+        return res;
     }
 
 } // namespace Cattery
