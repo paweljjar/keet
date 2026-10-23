@@ -3,7 +3,9 @@
 //
 
 #include "CLI.h"
+#include "Builder.h"
 #include "Scaffold.h"
+#include "Workspace.h"
 #include <filesystem>
 #include <sstream>
 
@@ -103,22 +105,30 @@ namespace Cattery {
                 options.verbose = true;
             } else if (arg == "--lib") {
                 options.target = TargetKind::Lib;
+                options.explicitTarget = true;
             } else if (arg == "--app") {
                 options.target = TargetKind::App;
+                options.explicitTarget = true;
             } else if (arg == "--desktop") {
                 options.target = TargetKind::Desktop;
+                options.explicitTarget = true;
             } else if (arg == "--target" && index + 1 < argc) {
                 index++;
                 options.targetOverride = argv[index];
                 options.target = targetFromString(options.targetOverride);
+                options.explicitTarget = true;
             } else if (arg == "--debug") {
                 options.buildMode = BuildMode::Debug;
+                options.explicitBuildMode = true;
             } else if (arg == "--release") {
                 options.buildMode = BuildMode::Release;
+                options.explicitBuildMode = true;
             } else if (arg == "--incremental") {
                 options.incremental = true;
             } else if (arg == "--no-incremental") {
                 options.incremental = false;
+            } else if (arg == "--dry-run") {
+                options.dryRun = true;
             } else if (arg == "--cache-dir" && index + 1 < argc) {
                 index++;
                 options.cacheDir = argv[index];
@@ -195,13 +205,22 @@ namespace Cattery {
     }
 
     void CatteryCLI::printInfo(const CLIOptions& options, std::ostream& os) {
-        os << "Cattery Workspace Information \U0001F431\n"
-           << "  - Version:       " << CATTERY_VERSION << "\n"
-           << "  - Project Dir:   " << std::filesystem::absolute(options.projectDir).string() << "\n"
-           << "  - Cache Dir:     " << options.cacheDir << "\n"
-           << "  - Codegen Dir:   .cattery/codegen/\n"
-           << "  - Build Dir:     .cattery/build/\n"
-           << "  - Packages Dir:  .cattery/packages/\n";
+        auto ws = Workspace::discover(options.projectDir);
+        os << "========================================================================\n"
+           << "  \U0001F431 Cattery Workspace Information\n"
+           << "========================================================================\n"
+           << "  - Version:       " << CATTERY_VERSION << "\n";
+        if (ws) {
+            os << "  - Project Root:  " << ws->getRoot().string() << "\n"
+               << "  - Manifest:      " << ws->getManifestPath().string() << "\n"
+               << "  - Codegen Dir:   " << ws->getCodegenDir().string() << "\n"
+               << "  - Build Dir:     " << ws->getBuildDir().string() << "\n"
+               << "  - Cache Dir:     " << ws->getCacheDir().string() << "\n"
+               << "  - Packages Dir:  " << ws->getPackagesDir().string() << "\n";
+        } else {
+            os << "  - Project Root:  (No active workspace found in "
+               << std::filesystem::absolute(options.projectDir).string() << ")\n";
+        }
     }
 
     int CatteryCLI::run(const CLIOptions& options, std::ostream& out, std::ostream& err) {
@@ -240,25 +259,105 @@ namespace Cattery {
                 return 0;
             }
             case CommandKind::Build: {
-                out << "cattery: building " << targetToString(options.target)
-                    << " [" << buildModeToString(options.buildMode) << "] "
-                    << (options.incremental ? "(incremental) " : "")
-                    << "\U0001F431\n";
-                // Phase 5 will execute the CMake build orchestration
+                auto ws = Workspace::discover(options.projectDir);
+                if (!ws) {
+                    err << "cattery: error: Could not find Keet project (missing pedigree.json in '"
+                        << options.projectDir << "' or parent directories).\n";
+                    return 1;
+                }
+
+                std::string loadErr;
+                auto manifestOpt = ws->loadManifest(&loadErr);
+                if (!manifestOpt) {
+                    err << "cattery: error: Failed to parse pedigree.json: " << loadErr << "\n";
+                    return 1;
+                }
+
+                auto buildRes = Builder::build(*ws, *manifestOpt, options, out, err);
+                if (!buildRes.success) {
+                    if (!buildRes.errorMessage.empty()) {
+                        err << "cattery: error: " << buildRes.errorMessage << "\n";
+                    }
+                    return buildRes.exitCode != 0 ? buildRes.exitCode : 1;
+                }
+
+                out << "cattery: build finished successfully! \U0001F431\u2728\n";
+                if (!buildRes.artifactPath.empty()) {
+                    out << "  ✔ Artifact: " << buildRes.artifactPath.string() << "\n";
+                }
                 return 0;
             }
             case CommandKind::Add: {
-                out << "cattery: adding dependency '" << options.packageName << "'";
-                if (!options.packagePath.empty()) {
-                    out << " from path: " << options.packagePath;
+                auto ws = Workspace::discover(options.projectDir);
+                if (!ws) {
+                    err << "cattery: error: Could not find Keet project (missing pedigree.json in '"
+                        << options.projectDir << "' or parent directories).\n";
+                    return 1;
                 }
-                out << " \U0001F431\n";
-                // Phase 4 will execute the Manifest mutator
+
+                std::string loadErr;
+                auto manifestOpt = ws->loadManifest(&loadErr);
+                if (!manifestOpt) {
+                    err << "cattery: error: Failed to parse pedigree.json: " << loadErr << "\n";
+                    return 1;
+                }
+
+                std::string pkgName = options.packageName;
+                std::string pkgVersion = "*";
+
+                // Check for name@version format
+                auto atPos = pkgName.find('@');
+                if (atPos != std::string::npos) {
+                    pkgVersion = pkgName.substr(atPos + 1);
+                    pkgName = pkgName.substr(0, atPos);
+                } else if (!options.extraArgs.empty()) {
+                    pkgVersion = options.extraArgs[0];
+                }
+
+                Dependency dep;
+                dep.name = pkgName;
+                dep.version = pkgVersion;
+                if (!options.packagePath.empty()) {
+                    dep.path = options.packagePath;
+                }
+
+                manifestOpt->addDependency(dep);
+
+                std::string saveErr;
+                if (!ws->saveManifest(*manifestOpt, &saveErr)) {
+                    err << "cattery: error: Failed to write pedigree.json: " << saveErr << "\n";
+                    return 1;
+                }
+
+                out << "cattery: added dependency '" << pkgName << "'";
+                if (dep.path) {
+                    out << " (path: " << *dep.path << ")";
+                } else if (dep.version != "*") {
+                    out << " (" << dep.version << ")";
+                }
+                out << " to pedigree.json \U0001F431\u2728\n";
                 return 0;
             }
             case CommandKind::Clean: {
-                out << "cattery: cleaning workspace (" << options.cleanScope << ") \U0001F431\n";
-                // Phase 3 will execute Workspace cleaner
+                auto ws = Workspace::discover(options.projectDir);
+                if (!ws) {
+                    err << "cattery: error: Could not find Keet project (missing pedigree.json in '"
+                        << options.projectDir << "' or parent directories).\n";
+                    return 1;
+                }
+                auto scope = Workspace::cleanScopeFromString(options.cleanScope);
+                auto res = ws->clean(scope);
+                if (!res.success) {
+                    err << "cattery: error: " << res.errorMessage << "\n";
+                    return 1;
+                }
+                out << "cattery: cleaned workspace (" << options.cleanScope << ") \U0001F431\n";
+                for (const auto& path : res.removedPaths) {
+                    out << "  ✔ Removed: " << path.string() << "\n";
+                }
+                if (res.bytesFreed > 0) {
+                    out << "  ✔ Freed: " << (res.bytesFreed / 1024) << " KB\n";
+                }
                 return 0;
             }
             case CommandKind::Info: {

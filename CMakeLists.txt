@@ -99,6 +99,9 @@ add_executable(cattery
         tools/cattery/main.cpp
         tools/cattery/CLI.cpp
         tools/cattery/Scaffold.cpp
+        tools/cattery/Workspace.cpp
+        tools/cattery/Manifest.cpp
+        tools/cattery/Builder.cpp
         src/Json.cpp
 )
 target_include_directories(cattery PRIVATE
@@ -206,6 +209,9 @@ target_include_directories(test_cpp_incremental_cache PRIVATE tools/keety)
 keet_add_test(test_cpp_cattery_cli tests/cpp/test_cattery_cli.cpp
         tools/cattery/CLI.cpp
         tools/cattery/Scaffold.cpp
+        tools/cattery/Workspace.cpp
+        tools/cattery/Manifest.cpp
+        tools/cattery/Builder.cpp
         src/Json.cpp
 )
 target_include_directories(test_cpp_cattery_cli PRIVATE tools/cattery include)
@@ -214,6 +220,9 @@ target_include_directories(test_cpp_cattery_cli PRIVATE tools/cattery include)
 keet_add_test(test_cpp_cattery_workspace tests/cpp/test_cattery_workspace.cpp
         tools/cattery/CLI.cpp
         tools/cattery/Scaffold.cpp
+        tools/cattery/Workspace.cpp
+        tools/cattery/Manifest.cpp
+        tools/cattery/Builder.cpp
         src/Json.cpp
 )
 target_include_directories(test_cpp_cattery_workspace PRIVATE tools/cattery include)

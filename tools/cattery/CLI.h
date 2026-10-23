@@ -71,8 +71,11 @@ namespace Cattery {
         CommandKind command = CommandKind::None;
         std::string projectName;
         TargetKind target = TargetKind::App;
+        bool explicitTarget = false;
         BuildMode buildMode = BuildMode::Release;
+        bool explicitBuildMode = false;
         bool incremental = true;
+        bool dryRun = false;
         std::string targetOverride;
         std::string packageName;
         std::string packagePath;
