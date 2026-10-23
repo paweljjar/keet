@@ -227,6 +227,17 @@ keet_add_test(test_cpp_cattery_workspace tests/cpp/test_cattery_workspace.cpp
 )
 target_include_directories(test_cpp_cattery_workspace PRIVATE tools/cattery include)
 
+# Cattery End-to-End Workflow & Multi-Package Integration test (Feature 10)
+keet_add_test(test_cpp_cattery_e2e tests/cpp/test_cattery_e2e.cpp
+        tools/cattery/CLI.cpp
+        tools/cattery/Scaffold.cpp
+        tools/cattery/Workspace.cpp
+        tools/cattery/Manifest.cpp
+        tools/cattery/Builder.cpp
+        src/Json.cpp
+)
+target_include_directories(test_cpp_cattery_e2e PRIVATE tools/cattery include)
+
 # =============================================================================
 # KeetScript Test Suite (tests/keet)
 # =============================================================================
