@@ -94,6 +94,22 @@ add_executable(keety
 )
 target_include_directories(keety PRIVATE tools/keety)
 
+# Define the standalone cattery package manager and workspace CLI utility (Feature 10)
+add_executable(cattery
+        tools/cattery/main.cpp
+        tools/cattery/CLI.cpp
+        tools/cattery/Scaffold.cpp
+        tools/cattery/Workspace.cpp
+        tools/cattery/Manifest.cpp
+        tools/cattery/Builder.cpp
+        src/Json.cpp
+)
+target_include_directories(cattery PRIVATE
+        tools/cattery
+        include
+)
+target_compile_features(cattery PUBLIC cxx_std_20)
+
 # Include KeetScript Ahead-of-Time compiler and Testing CMake helpers
 include(cmake/KeetCompiler.cmake)
 include(cmake/KeetTesting.cmake)
@@ -188,6 +204,39 @@ keet_add_test(test_cpp_incremental_cache tests/cpp/test_incremental_cache.cpp
         tools/keety/IncrementalCache.cpp
 )
 target_include_directories(test_cpp_incremental_cache PRIVATE tools/keety)
+
+# Cattery CLI command & argument parser C++ unit test (Feature 10)
+keet_add_test(test_cpp_cattery_cli tests/cpp/test_cattery_cli.cpp
+        tools/cattery/CLI.cpp
+        tools/cattery/Scaffold.cpp
+        tools/cattery/Workspace.cpp
+        tools/cattery/Manifest.cpp
+        tools/cattery/Builder.cpp
+        src/Json.cpp
+)
+target_include_directories(test_cpp_cattery_cli PRIVATE tools/cattery include)
+
+# Cattery Workspace & Scaffolding C++ unit test (Feature 10)
+keet_add_test(test_cpp_cattery_workspace tests/cpp/test_cattery_workspace.cpp
+        tools/cattery/CLI.cpp
+        tools/cattery/Scaffold.cpp
+        tools/cattery/Workspace.cpp
+        tools/cattery/Manifest.cpp
+        tools/cattery/Builder.cpp
+        src/Json.cpp
+)
+target_include_directories(test_cpp_cattery_workspace PRIVATE tools/cattery include)
+
+# Cattery End-to-End Workflow & Multi-Package Integration test (Feature 10)
+keet_add_test(test_cpp_cattery_e2e tests/cpp/test_cattery_e2e.cpp
+        tools/cattery/CLI.cpp
+        tools/cattery/Scaffold.cpp
+        tools/cattery/Workspace.cpp
+        tools/cattery/Manifest.cpp
+        tools/cattery/Builder.cpp
+        src/Json.cpp
+)
+target_include_directories(test_cpp_cattery_e2e PRIVATE tools/cattery include)
 
 # =============================================================================
 # KeetScript Test Suite (tests/keet)
