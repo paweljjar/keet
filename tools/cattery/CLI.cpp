@@ -9,10 +9,69 @@
 #include "PackageSynthesizer.h"
 #include "Scaffold.h"
 #include "Workspace.h"
+#include <keet/Json.h>
 #include <filesystem>
+#include <fstream>
+#include <set>
 #include <sstream>
 
 namespace Cattery {
+
+    namespace {
+        void resolveTransitiveDependencies(Workspace& ws,
+                                          const std::string& parentPkgName,
+                                          const DownloadOptions& baseOpts,
+                                          Lockfile& lockfile,
+                                          std::ostream& out,
+                                          std::set<std::string>& visited) {
+            std::filesystem::path parentDir = ws.getPackagesDir() / parentPkgName;
+            std::filesystem::path manifestPath = parentDir / "pedigree.json";
+            std::error_code ec;
+            if (!std::filesystem::exists(manifestPath, ec)) return;
+
+            std::ifstream ifs(manifestPath);
+            if (!ifs.is_open()) return;
+            std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+            ifs.close();
+
+            try {
+                auto parsed = HTTPServer::Json::parse(content);
+                if (!parsed.isObject() || !parsed.asObject().contains("dependencies")) return;
+                auto depsVal = parsed.asObject().at("dependencies");
+                if (!depsVal.isObject()) return;
+
+                for (const auto& [depName, depObj] : depsVal.asObject()) {
+                    if (visited.contains(depName)) continue;
+                    visited.insert(depName);
+
+                    DownloadOptions dOpts = baseOpts;
+                    if (depObj.isString() && depObj.asString() != "*") {
+                        dOpts.version = depObj.asString();
+                    }
+
+                    auto locked = lockfile.getPackage(depName);
+                    if (locked) {
+                        dOpts.expectedChecksum = locked->checksum;
+                        if (!locked->version.empty()) dOpts.version = locked->version;
+                    }
+
+                    auto fetchRes = Downloader::fetchPackage(ws, depName, dOpts);
+                    if (fetchRes.success) {
+                        LockedPackage lp;
+                        lp.name = depName;
+                        lp.version = fetchRes.resolvedVersion.empty() ? "1.0.0" : fetchRes.resolvedVersion;
+                        lp.source = fetchRes.sourceUrl.empty() ? "registry" : fetchRes.sourceUrl;
+                        if (!fetchRes.resolvedCommit.empty()) lp.commit = fetchRes.resolvedCommit;
+                        lp.checksum = fetchRes.checksum;
+                        lockfile.addPackage(lp);
+                        out << "  ✔ Fetched transitive dependency: " << depName << "@" << lp.version << "\n";
+
+                        resolveTransitiveDependencies(ws, depName, baseOpts, lockfile, out, visited);
+                    }
+                }
+            } catch (...) {}
+        }
+    }
 
     std::string CatteryCLI::targetToString(TargetKind target) {
         switch (target) {
@@ -367,6 +426,11 @@ namespace Cattery {
                         }
                         lp.checksum = fetchRes.checksum;
                         lockfile.addPackage(lp);
+
+                        std::set<std::string> visited;
+                        visited.insert(pkgName);
+                        resolveTransitiveDependencies(*ws, pkgName, dOpts, lockfile, out, visited);
+
                         ws->saveLockfile(lockfile);
                     } else {
                         if (!options.registryUrl.empty()) {
@@ -531,6 +595,10 @@ namespace Cattery {
 
                     out << "  ✔ Installed " << name << "@" << lp.version << " [" << lp.checksum << "]"
                         << (fetchRes.fromCache ? " (cached)" : "") << "\n";
+
+                    std::set<std::string> visited;
+                    visited.insert(name);
+                    resolveTransitiveDependencies(*ws, name, dOpts, lockfile, out, visited);
                 }
 
                 if (lockfileModified) {
