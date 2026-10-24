@@ -3,6 +3,8 @@
 //
 
 #include "Workspace.h"
+#include "ManifestValidator.h"
+#include "PackageSynthesizer.h"
 #include <fstream>
 #include <sstream>
 #include <system_error>
@@ -197,6 +199,11 @@ namespace Cattery {
             *errorOut = res.format();
         }
         return res;
+    }
+
+    bool Workspace::synthesizePackages(std::string* errorOut) const {
+        auto res = PackageSynthesizer::synthesize(*this, errorOut);
+        return res.success;
     }
 
 } // namespace Cattery

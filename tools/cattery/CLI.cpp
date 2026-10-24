@@ -4,6 +4,9 @@
 
 #include "CLI.h"
 #include "Builder.h"
+#include "Downloader.h"
+#include "Lockfile.h"
+#include "PackageSynthesizer.h"
 #include "Scaffold.h"
 #include "Workspace.h"
 #include <filesystem>
@@ -73,6 +76,10 @@ namespace Cattery {
             options.command = CommandKind::Build;
         } else if (firstArg == "add") {
             options.command = CommandKind::Add;
+        } else if (firstArg == "remove" || firstArg == "rm") {
+            options.command = CommandKind::Remove;
+        } else if (firstArg == "install" || firstArg == "i") {
+            options.command = CommandKind::Install;
         } else if (firstArg == "clean") {
             options.command = CommandKind::Clean;
         } else if (firstArg == "info") {
@@ -138,6 +145,9 @@ namespace Cattery {
             } else if (arg == "--path" && index + 1 < argc) {
                 index++;
                 options.packagePath = argv[index];
+            } else if (arg == "--registry" && index + 1 < argc) {
+                index++;
+                options.registryUrl = argv[index];
             } else if (arg == "--all") {
                 options.cleanScope = "all";
             } else if (arg == "--cache") {
@@ -151,7 +161,7 @@ namespace Cattery {
                 // Positional arguments
                 if (options.command == CommandKind::Init && options.projectName.empty()) {
                     options.projectName = arg;
-                } else if (options.command == CommandKind::Add && options.packageName.empty()) {
+                } else if ((options.command == CommandKind::Add || options.command == CommandKind::Remove) && options.packageName.empty()) {
                     options.packageName = arg;
                 } else {
                     options.extraArgs.push_back(arg);
@@ -165,6 +175,8 @@ namespace Cattery {
             options.errorMessage = "cattery init requires a project name (e.g. 'cattery init my-app')";
         } else if (options.command == CommandKind::Add && options.packageName.empty()) {
             options.errorMessage = "cattery add requires a package name (e.g. 'cattery add cattery-sqlite')";
+        } else if (options.command == CommandKind::Remove && options.packageName.empty()) {
+            options.errorMessage = "cattery remove requires a package name (e.g. 'cattery remove cattery-sqlite')";
         }
 
         return options;
@@ -182,7 +194,9 @@ namespace Cattery {
            << "  build           Compile project via CMake and keety\n"
            << "                  Flags: [--target server|desktop|lib] [--release | --debug] [--incremental]\n"
            << "  add <package>   Add a dependency to pedigree.json and workspace\n"
-           << "                  Flags: [--path <local_directory>]\n"
+           << "                  Flags: [--path <dir>] [--registry <url>]\n"
+           << "  remove <pkg>    Remove a dependency from pedigree.json and workspace\n"
+           << "  install         Install/restore all dependencies declared in pedigree.json\n"
            << "  clean           Clean workspace build artifacts\n"
            << "                  Flags: [--all | --cache | --build]\n"
            << "  info            Display project workspace information\n"
@@ -302,6 +316,8 @@ namespace Cattery {
                     return 1;
                 }
 
+                ws->ensureLayout();
+
                 std::string pkgName = options.packageName;
                 std::string pkgVersion = "*";
 
@@ -317,8 +333,48 @@ namespace Cattery {
                 Dependency dep;
                 dep.name = pkgName;
                 dep.version = pkgVersion;
+
+                // Handle local path dependency
                 if (!options.packagePath.empty()) {
                     dep.path = options.packagePath;
+                    std::filesystem::path localSrc(options.packagePath);
+                    if (std::filesystem::exists(localSrc)) {
+                        Downloader::fetchFromLocalDirectory(localSrc.parent_path(), pkgName, ws->getPackagesDir() / pkgName);
+                        auto lockfile = ws->loadLockfile().value_or(Lockfile());
+                        LockedPackage lp;
+                        lp.name = pkgName;
+                        lp.version = dep.version == "*" ? "0.1.0" : dep.version;
+                        lp.source = "path:" + options.packagePath;
+                        lp.checksum = Downloader::computePackageChecksum(ws->getPackagesDir() / pkgName);
+                        lockfile.addPackage(lp);
+                        ws->saveLockfile(lockfile);
+                    }
+                } else {
+                    // Remote registry / monorepo acquisition
+                    DownloadOptions dOpts;
+                    dOpts.registryUrl = options.registryUrl;
+                    dOpts.version = (pkgVersion == "*" ? "" : pkgVersion);
+
+                    auto fetchRes = Downloader::fetchPackage(*ws, pkgName, dOpts);
+                    if (fetchRes.success) {
+                        auto lockfile = ws->loadLockfile().value_or(Lockfile());
+                        LockedPackage lp;
+                        lp.name = pkgName;
+                        lp.version = fetchRes.resolvedVersion.empty() ? (pkgVersion == "*" ? "0.1.0" : pkgVersion) : fetchRes.resolvedVersion;
+                        lp.source = fetchRes.sourceUrl.empty() ? "registry" : fetchRes.sourceUrl;
+                        if (!fetchRes.resolvedCommit.empty()) {
+                            lp.commit = fetchRes.resolvedCommit;
+                        }
+                        lp.checksum = fetchRes.checksum;
+                        lockfile.addPackage(lp);
+                        ws->saveLockfile(lockfile);
+                    } else {
+                        if (!options.registryUrl.empty()) {
+                            err << "cattery: error: Failed to fetch package '" << pkgName << "': " << fetchRes.errorMessage << "\n";
+                            return 1;
+                        }
+                        out << "cattery: warning: " << fetchRes.errorMessage << " (added to pedigree.json offline)\n";
+                    }
                 }
 
                 manifestOpt->addDependency(dep);
@@ -329,6 +385,9 @@ namespace Cattery {
                     return 1;
                 }
 
+                // Regenerate dynamic packages.cmake
+                ws->synthesizePackages();
+
                 out << "cattery: added dependency '" << pkgName << "'";
                 if (dep.path) {
                     out << " (path: " << *dep.path << ")";
@@ -336,6 +395,150 @@ namespace Cattery {
                     out << " (" << dep.version << ")";
                 }
                 out << " to pedigree.json \U0001F431\u2728\n";
+                return 0;
+            }
+            case CommandKind::Remove: {
+                auto ws = Workspace::discover(options.projectDir);
+                if (!ws) {
+                    err << "cattery: error: Could not find Keet project (missing pedigree.json in '"
+                        << options.projectDir << "' or parent directories).\n";
+                    return 1;
+                }
+
+                std::string loadErr;
+                auto manifestOpt = ws->loadManifest(&loadErr);
+                if (!manifestOpt) {
+                    err << "cattery: error: Failed to parse pedigree.json: " << loadErr << "\n";
+                    return 1;
+                }
+
+                std::string pkgName = options.packageName;
+                if (!manifestOpt->hasDependency(pkgName)) {
+                    err << "cattery: error: Dependency '" << pkgName << "' not found in pedigree.json\n";
+                    return 1;
+                }
+
+                manifestOpt->removeDependency(pkgName);
+
+                std::string saveErr;
+                if (!ws->saveManifest(*manifestOpt, &saveErr)) {
+                    err << "cattery: error: Failed to write pedigree.json: " << saveErr << "\n";
+                    return 1;
+                }
+
+                // Remove from pedigree.lock if present
+                auto lockfileOpt = ws->loadLockfile();
+                if (lockfileOpt) {
+                    if (lockfileOpt->hasPackage(pkgName)) {
+                        lockfileOpt->removePackage(pkgName);
+                        ws->saveLockfile(*lockfileOpt);
+                    }
+                }
+
+                // Evict installed package directory if present
+                std::error_code ec;
+                std::filesystem::path pkgDir = ws->getPackagesDir() / pkgName;
+                if (std::filesystem::exists(pkgDir, ec)) {
+                    std::filesystem::remove_all(pkgDir, ec);
+                }
+
+                // Regenerate dynamic packages.cmake
+                ws->synthesizePackages();
+
+                out << "cattery: removed dependency '" << pkgName << "' from pedigree.json and workspace \U0001F431\u2728\n";
+                return 0;
+            }
+            case CommandKind::Install: {
+                auto ws = Workspace::discover(options.projectDir);
+                if (!ws) {
+                    err << "cattery: error: Could not find Keet project (missing pedigree.json in '"
+                        << options.projectDir << "' or parent directories).\n";
+                    return 1;
+                }
+
+                std::string loadErr;
+                auto manifestOpt = ws->loadManifest(&loadErr);
+                if (!manifestOpt) {
+                    err << "cattery: error: Failed to parse pedigree.json: " << loadErr << "\n";
+                    return 1;
+                }
+
+                ws->ensureLayout();
+
+                const auto& deps = manifestOpt->getDependencies();
+                if (deps.empty()) {
+                    out << "cattery: no dependencies declared in pedigree.json \U0001F431\n";
+                    ws->synthesizePackages();
+                    return 0;
+                }
+
+                out << "cattery: installing dependencies for project '" << manifestOpt->getName() << "' \U0001F431\n";
+                auto lockfile = ws->loadLockfile().value_or(Lockfile());
+                bool lockfileModified = false;
+
+                for (const auto& [name, dep] : deps) {
+                    if (dep.path) {
+                        std::filesystem::path srcPath(*dep.path);
+                        if (std::filesystem::exists(srcPath)) {
+                            Downloader::fetchFromLocalDirectory(srcPath.parent_path(), name, ws->getPackagesDir() / name);
+                            LockedPackage lp;
+                            lp.name = name;
+                            lp.version = dep.version == "*" ? "0.1.0" : dep.version;
+                            lp.source = "path:" + *dep.path;
+                            lp.checksum = Downloader::computePackageChecksum(ws->getPackagesDir() / name);
+                            lockfile.addPackage(lp);
+                            lockfileModified = true;
+                            out << "  ✔ Installed local package: " << name << " (" << *dep.path << ")\n";
+                        } else {
+                            err << "cattery: error: Local path for package '" << name << "' does not exist: " << *dep.path << "\n";
+                            return 1;
+                        }
+                        continue;
+                    }
+
+                    DownloadOptions dOpts;
+                    dOpts.registryUrl = options.registryUrl;
+                    dOpts.version = (dep.version == "*" ? "" : dep.version);
+
+                    auto lockedPkg = lockfile.getPackage(name);
+                    if (lockedPkg) {
+                        dOpts.expectedChecksum = lockedPkg->checksum;
+                        if (!lockedPkg->version.empty()) {
+                            dOpts.version = lockedPkg->version;
+                        }
+                    }
+
+                    auto fetchRes = Downloader::fetchPackage(*ws, name, dOpts);
+                    if (!fetchRes.success) {
+                        if (!options.registryUrl.empty()) {
+                            err << "cattery: error: Failed to install package '" << name << "': " << fetchRes.errorMessage << "\n";
+                            return 1;
+                        }
+                        out << "  ⚠ Warning: Failed to fetch '" << name << "': " << fetchRes.errorMessage << " (skipping offline)\n";
+                        continue;
+                    }
+
+                    LockedPackage lp;
+                    lp.name = name;
+                    lp.version = fetchRes.resolvedVersion.empty() ? (dep.version == "*" ? "0.1.0" : dep.version) : fetchRes.resolvedVersion;
+                    lp.source = fetchRes.sourceUrl.empty() ? "registry" : fetchRes.sourceUrl;
+                    if (!fetchRes.resolvedCommit.empty()) {
+                        lp.commit = fetchRes.resolvedCommit;
+                    }
+                    lp.checksum = fetchRes.checksum;
+                    lockfile.addPackage(lp);
+                    lockfileModified = true;
+
+                    out << "  ✔ Installed " << name << "@" << lp.version << " [" << lp.checksum << "]"
+                        << (fetchRes.fromCache ? " (cached)" : "") << "\n";
+                }
+
+                if (lockfileModified) {
+                    ws->saveLockfile(lockfile);
+                }
+
+                ws->synthesizePackages();
+                out << "cattery: dependencies installation finished successfully! \U0001F431\u2728\n";
                 return 0;
             }
             case CommandKind::Clean: {

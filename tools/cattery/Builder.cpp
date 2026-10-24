@@ -3,6 +3,7 @@
 //
 
 #include "Builder.h"
+#include "PackageSynthesizer.h"
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
@@ -84,6 +85,9 @@ namespace Cattery {
         plan.buildDir = ws.getBuildDir();
         plan.codegenDir = ws.getCodegenDir();
         plan.cacheDir = ws.getCacheDir();
+
+        // Ensure packages.cmake is synthesized for CMake configuration
+        PackageSynthesizer::synthesize(ws);
 
         // Effective Target: CLI explicit takes priority over manifest target
         plan.target = options.explicitTarget ? options.target : manifest.getTarget();

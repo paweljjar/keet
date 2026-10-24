@@ -18,7 +18,9 @@ namespace Cattery {
         None,
         Init,       // cattery init <name> [--lib | --app | --desktop]
         Build,      // cattery build [--target ...] [--release | --debug]
-        Add,        // cattery add <package> [--path <dir>]
+        Add,        // cattery add <package> [--path <dir>] [--registry <url>]
+        Remove,     // cattery remove <package> / cattery rm <package>
+        Install,    // cattery install / cattery i
         Clean,      // cattery clean [--all | --cache | --build]
         Info,       // cattery info
         Version,    // cattery --version / -V
@@ -42,6 +44,8 @@ namespace Cattery {
             case CommandKind::Init: return os << "Init";
             case CommandKind::Build: return os << "Build";
             case CommandKind::Add: return os << "Add";
+            case CommandKind::Remove: return os << "Remove";
+            case CommandKind::Install: return os << "Install";
             case CommandKind::Clean: return os << "Clean";
             case CommandKind::Info: return os << "Info";
             case CommandKind::Version: return os << "Version";
@@ -79,6 +83,7 @@ namespace Cattery {
         std::string targetOverride;
         std::string packageName;
         std::string packagePath;
+        std::string registryUrl;
         std::string cleanScope = "default"; // "default", "cache", "build", "all"
         std::string cacheDir = ".cattery/cache/kir";
         std::string projectDir = ".";

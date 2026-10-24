@@ -103,6 +103,9 @@ add_executable(cattery
         tools/cattery/Manifest.cpp
         tools/cattery/ManifestValidator.cpp
         tools/cattery/Lockfile.cpp
+        tools/cattery/Hash.cpp
+        tools/cattery/Downloader.cpp
+        tools/cattery/PackageSynthesizer.cpp
         tools/cattery/Builder.cpp
         src/Json.cpp
 )
@@ -215,6 +218,9 @@ keet_add_test(test_cpp_cattery_cli tests/cpp/test_cattery_cli.cpp
         tools/cattery/Manifest.cpp
         tools/cattery/ManifestValidator.cpp
         tools/cattery/Lockfile.cpp
+        tools/cattery/Hash.cpp
+        tools/cattery/Downloader.cpp
+        tools/cattery/PackageSynthesizer.cpp
         tools/cattery/Builder.cpp
         src/Json.cpp
 )
@@ -228,6 +234,9 @@ keet_add_test(test_cpp_cattery_workspace tests/cpp/test_cattery_workspace.cpp
         tools/cattery/Manifest.cpp
         tools/cattery/ManifestValidator.cpp
         tools/cattery/Lockfile.cpp
+        tools/cattery/Hash.cpp
+        tools/cattery/Downloader.cpp
+        tools/cattery/PackageSynthesizer.cpp
         tools/cattery/Builder.cpp
         src/Json.cpp
 )
@@ -241,6 +250,9 @@ keet_add_test(test_cpp_cattery_e2e tests/cpp/test_cattery_e2e.cpp
         tools/cattery/Manifest.cpp
         tools/cattery/ManifestValidator.cpp
         tools/cattery/Lockfile.cpp
+        tools/cattery/Hash.cpp
+        tools/cattery/Downloader.cpp
+        tools/cattery/PackageSynthesizer.cpp
         tools/cattery/Builder.cpp
         src/Json.cpp
 )
@@ -254,10 +266,61 @@ keet_add_test(test_cpp_cattery_manifest_validator tests/cpp/test_cattery_manifes
         tools/cattery/Manifest.cpp
         tools/cattery/ManifestValidator.cpp
         tools/cattery/Lockfile.cpp
+        tools/cattery/Hash.cpp
+        tools/cattery/Downloader.cpp
+        tools/cattery/PackageSynthesizer.cpp
         tools/cattery/Builder.cpp
         src/Json.cpp
 )
 target_include_directories(test_cpp_cattery_manifest_validator PRIVATE tools/cattery include)
+
+# Cattery Downloader & Local Monorepo Cache unit test (Feature 11)
+keet_add_test(test_cpp_cattery_downloader tests/cpp/test_cattery_downloader.cpp
+        tools/cattery/CLI.cpp
+        tools/cattery/Scaffold.cpp
+        tools/cattery/Workspace.cpp
+        tools/cattery/Manifest.cpp
+        tools/cattery/ManifestValidator.cpp
+        tools/cattery/Lockfile.cpp
+        tools/cattery/Hash.cpp
+        tools/cattery/Downloader.cpp
+        tools/cattery/PackageSynthesizer.cpp
+        tools/cattery/Builder.cpp
+        src/Json.cpp
+)
+target_include_directories(test_cpp_cattery_downloader PRIVATE tools/cattery include)
+
+# Cattery Package Synthesizer unit test (Feature 11)
+keet_add_test(test_cpp_cattery_synthesizer tests/cpp/test_cattery_synthesizer.cpp
+        tools/cattery/CLI.cpp
+        tools/cattery/Scaffold.cpp
+        tools/cattery/Workspace.cpp
+        tools/cattery/Manifest.cpp
+        tools/cattery/ManifestValidator.cpp
+        tools/cattery/Lockfile.cpp
+        tools/cattery/Hash.cpp
+        tools/cattery/Downloader.cpp
+        tools/cattery/PackageSynthesizer.cpp
+        tools/cattery/Builder.cpp
+        src/Json.cpp
+)
+target_include_directories(test_cpp_cattery_synthesizer PRIVATE tools/cattery include)
+
+# Cattery Remote Registry & Monorepo Downloader E2E test (Feature 11)
+keet_add_test(test_cpp_cattery_remote_e2e tests/cpp/test_cattery_remote_e2e.cpp
+        tools/cattery/CLI.cpp
+        tools/cattery/Scaffold.cpp
+        tools/cattery/Workspace.cpp
+        tools/cattery/Manifest.cpp
+        tools/cattery/ManifestValidator.cpp
+        tools/cattery/Lockfile.cpp
+        tools/cattery/Hash.cpp
+        tools/cattery/Downloader.cpp
+        tools/cattery/PackageSynthesizer.cpp
+        tools/cattery/Builder.cpp
+        src/Json.cpp
+)
+target_include_directories(test_cpp_cattery_remote_e2e PRIVATE tools/cattery include)
 
 # =============================================================================
 # KeetScript Test Suite (tests/keet)

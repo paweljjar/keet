@@ -46,6 +46,7 @@ namespace Cattery {
         [[nodiscard]] std::filesystem::path getPackagesDir() const { return getCatteryDir() / "packages"; }
         [[nodiscard]] std::filesystem::path getManifestPath() const { return _root / "pedigree.json"; }
         [[nodiscard]] std::filesystem::path getLockfilePath() const { return _root / "pedigree.lock"; }
+        [[nodiscard]] std::filesystem::path getPackagesCmakePath() const { return getCatteryDir() / "packages.cmake"; }
 
         // Ensure all required .cattery directories exist
         bool ensureLayout(std::string* errorOut = nullptr) const;
@@ -57,6 +58,9 @@ namespace Cattery {
         // Load or save pedigree.lock
         [[nodiscard]] std::optional<Lockfile> loadLockfile(std::string* errorOut = nullptr) const;
         bool saveLockfile(const Lockfile& lockfile, std::string* errorOut = nullptr) const;
+
+        // Synthesize dynamic .cattery/packages.cmake based on installed packages
+        bool synthesizePackages(std::string* errorOut = nullptr) const;
 
         // Validate manifest against schema
         [[nodiscard]] ValidationResult validateManifest(std::string* errorOut = nullptr) const;

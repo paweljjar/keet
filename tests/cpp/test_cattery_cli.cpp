@@ -5,6 +5,7 @@
 #include <keet/Testing.h>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 #include "CLI.h"
 
@@ -244,6 +245,129 @@ KEET_TEST(CatteryCLI, RunDispatcher) {
         KEET_ASSERT_EQ(code, 1);
         KEET_ASSERT_TRUE(err.str().find("cattery: error: Unknown command") != std::string::npos);
     }
+}
+
+KEET_TEST(CatteryCLI, RemoveAndInstallParsing) {
+    // cattery remove <pkg>
+    {
+        const char* argv[] = {"cattery", "remove", "cattery-sqlite"};
+        auto opts = CatteryCLI::parse(3, argv);
+        KEET_ASSERT_TRUE(opts.isValid());
+        KEET_ASSERT_EQ(opts.command, CommandKind::Remove);
+        KEET_ASSERT_EQ(opts.packageName, "cattery-sqlite");
+    }
+    // cattery rm <pkg>
+    {
+        const char* argv[] = {"cattery", "rm", "cattery-sqlite"};
+        auto opts = CatteryCLI::parse(3, argv);
+        KEET_ASSERT_TRUE(opts.isValid());
+        KEET_ASSERT_EQ(opts.command, CommandKind::Remove);
+        KEET_ASSERT_EQ(opts.packageName, "cattery-sqlite");
+    }
+    // cattery remove without package name
+    {
+        const char* argv[] = {"cattery", "remove"};
+        auto opts = CatteryCLI::parse(2, argv);
+        KEET_ASSERT_FALSE(opts.isValid());
+        KEET_ASSERT_TRUE(opts.errorMessage.find("cattery remove requires a package name") != std::string::npos);
+    }
+    // cattery install
+    {
+        const char* argv[] = {"cattery", "install"};
+        auto opts = CatteryCLI::parse(2, argv);
+        KEET_ASSERT_TRUE(opts.isValid());
+        KEET_ASSERT_EQ(opts.command, CommandKind::Install);
+    }
+    // cattery i
+    {
+        const char* argv[] = {"cattery", "i"};
+        auto opts = CatteryCLI::parse(2, argv);
+        KEET_ASSERT_TRUE(opts.isValid());
+        KEET_ASSERT_EQ(opts.command, CommandKind::Install);
+    }
+    // cattery add with --registry
+    {
+        const char* argv[] = {"cattery", "add", "cattery-sqlite", "--registry", "https://example.com/pkgs.git"};
+        auto opts = CatteryCLI::parse(5, argv);
+        KEET_ASSERT_TRUE(opts.isValid());
+        KEET_ASSERT_EQ(opts.command, CommandKind::Add);
+        KEET_ASSERT_EQ(opts.packageName, "cattery-sqlite");
+        KEET_ASSERT_EQ(opts.registryUrl, "https://example.com/pkgs.git");
+    }
+}
+
+KEET_TEST(CatteryCLI, RemoveAndInstallDispatch) {
+    auto sandbox = std::filesystem::temp_directory_path() / ("cattery_rm_inst_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(sandbox);
+    std::string sandboxStr = sandbox.string();
+
+    // 1. Init project
+    {
+        const char* argv[] = {"cattery", "init", "test_app", "-C", sandboxStr.c_str()};
+        auto opts = CatteryCLI::parse(5, argv);
+        std::ostringstream out, err;
+        KEET_ASSERT_EQ(CatteryCLI::run(opts, out, err), 0);
+    }
+
+    auto projRoot = sandbox / "test_app";
+    std::string projRootStr = projRoot.string();
+
+    // 2. Add local package
+    auto localPkg = sandbox / "local_repo" / "packages" / "test-pkg";
+    std::filesystem::create_directories(localPkg / "include");
+    {
+        std::ofstream f(localPkg / "include" / "test_pkg.h");
+        f << "#pragma once\n";
+    }
+
+    {
+        std::string pathArg = localPkg.string();
+        const char* argv[] = {"cattery", "add", "test-pkg", "--path", pathArg.c_str(), "-C", projRootStr.c_str()};
+        auto opts = CatteryCLI::parse(7, argv);
+        std::ostringstream out, err;
+        int code = CatteryCLI::run(opts, out, err);
+        KEET_ASSERT_EQ(code, 0);
+        KEET_ASSERT_TRUE(out.str().find("added dependency 'test-pkg'") != std::string::npos);
+    }
+
+    // Verify package is present in packages/, pedigree.json, pedigree.lock, packages.cmake
+    KEET_ASSERT_TRUE(std::filesystem::exists(projRoot / ".cattery" / "packages" / "test-pkg"));
+    KEET_ASSERT_TRUE(std::filesystem::exists(projRoot / "pedigree.lock"));
+    {
+        std::ifstream f(projRoot / ".cattery" / "packages.cmake");
+        std::string s((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        KEET_ASSERT_TRUE(s.find("test-pkg") != std::string::npos);
+    }
+
+    // 3. Remove package via CLI
+    {
+        const char* argv[] = {"cattery", "remove", "test-pkg", "-C", projRootStr.c_str()};
+        auto opts = CatteryCLI::parse(5, argv);
+        std::ostringstream out, err;
+        int code = CatteryCLI::run(opts, out, err);
+        KEET_ASSERT_EQ(code, 0);
+        KEET_ASSERT_TRUE(out.str().find("removed dependency 'test-pkg'") != std::string::npos);
+    }
+
+    // Verify package evicted from .cattery/packages/, removed from pedigree.lock, packages.cmake updated
+    KEET_ASSERT_FALSE(std::filesystem::exists(projRoot / ".cattery" / "packages" / "test-pkg"));
+    {
+        std::ifstream f(projRoot / ".cattery" / "packages.cmake");
+        std::string s((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        KEET_ASSERT_FALSE(s.find("Package: test-pkg") != std::string::npos);
+    }
+
+    // 4. Install command on empty deps
+    {
+        const char* argv[] = {"cattery", "install", "-C", projRootStr.c_str()};
+        auto opts = CatteryCLI::parse(4, argv);
+        std::ostringstream out, err;
+        int code = CatteryCLI::run(opts, out, err);
+        KEET_ASSERT_EQ(code, 0);
+        KEET_ASSERT_TRUE(out.str().find("no dependencies declared") != std::string::npos);
+    }
+
+    std::filesystem::remove_all(sandbox);
 }
 
 KEET_TEST_MAIN()

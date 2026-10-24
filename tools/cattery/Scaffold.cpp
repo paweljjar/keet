@@ -3,6 +3,8 @@
 //
 
 #include "Scaffold.h"
+#include "PackageSynthesizer.h"
+#include "Workspace.h"
 #include <fstream>
 #include <sstream>
 
@@ -94,6 +96,11 @@ namespace Cattery {
            << "\n"
            << "# Discover Keet and Cattery toolchain\n"
            << "find_package(Keet QUIET HINTS \"${CMAKE_CURRENT_SOURCE_DIR}/..\" \"${CMAKE_CURRENT_SOURCE_DIR}/../..\" \"$ENV{KEET_HOME}\")\n"
+           << "\n"
+           << "# Include Cattery synthesized packages target file if present\n"
+           << "if(EXISTS \"${CMAKE_CURRENT_SOURCE_DIR}/.cattery/packages.cmake\")\n"
+           << "    include(\"${CMAKE_CURRENT_SOURCE_DIR}/.cattery/packages.cmake\")\n"
+           << "endif()\n"
            << "\n";
 
         if (target == TargetKind::Lib) {
@@ -288,6 +295,11 @@ namespace Cattery {
             return result;
         }
         result.generatedFiles.push_back(sourcePath);
+
+        // 5. Initial .cattery/packages.cmake
+        Workspace ws(root);
+        PackageSynthesizer::synthesize(ws);
+        result.generatedFiles.push_back(PackageSynthesizer::getPackagesCmakePath(ws));
 
         result.success = true;
         return result;
